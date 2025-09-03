@@ -22,6 +22,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const baseFormFields = [subjectSelect, schoolTypeSelect];
     let clientID = null;
 
+    // Definicja bazowego URL dla API
+    const API_BASE_URL = 'https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app';
+
     // --- GŁÓWNA LOGIKA INICJALIZACJI APLIKACJI ---
     async function initializeApp() {
         const params = new URLSearchParams(window.location.search);
@@ -56,19 +59,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // ### POPRAWIONA FUNKCJA ###
     async function verifyClient(id) {
-        // Upewnij się, że URL jest poprawny i zawiera ścieżkę do endpointu
-        const apiUrl = `https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/verify-client?clientID=${id}`;
-        console.log("Wysyłam zapytanie weryfikacyjne do:", apiUrl); // Dodatkowy log do debugowania
+        // Używamy zdefiniowanego API_BASE_URL
+        const apiUrl = `${API_BASE_URL}/api/verify-client?clientID=${id}`;
+        console.log("Wysyłam zapytanie weryfikacyjne do:", apiUrl);
         
         const response = await fetch(apiUrl);
         if (!response.ok) {
-            // Spróbuj odczytać błąd jako JSON, jeśli się nie uda, użyj tekstu
-            let errorMessage = "Nie udało się zweryfikować klienta.";
+            let errorMessage = `Błąd ${response.status}: Klient o podanym ID nie został znaleziony.`;
             try {
                 const errorData = await response.json();
                 errorMessage = errorData.message || errorMessage;
             } catch (e) {
-                errorMessage = await response.text();
+                // Pozostaw domyślny błąd, jeśli odpowiedź nie jest w formacie JSON
             }
             throw new Error(errorMessage);
         }
@@ -82,8 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         bookingContainer.style.display = 'flex';
     }
 
-    // --- POZOSTAŁE FUNKCJE (bez zmian) ---
-    // ... (skopiuj resztę pliku script.js z poprzedniej, pełnej wersji)
+    // --- POZOSTAŁE FUNKCJE ---
     let selectedSlotId = null;
     let selectedDate = null;
     let selectedTime = null;
@@ -262,7 +263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function fetchAvailableSlots(startDate) {
         console.log(`Pobieram dostępne sloty z Airtable dla tygodnia od ${getFormattedDate(startDate)}...`);
         try {
-            const response = await fetch(`https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/get-schedule?startDate=${getFormattedDate(startDate)}`);
+            const response = await fetch(`${API_BASE_URL}/api/get-schedule?startDate=${getFormattedDate(startDate)}`);
             if (!response.ok) { throw new Error('Błąd pobierania danych z serwera'); }
             const scheduleFromApi = await response.json();
             const processedData = {};
@@ -314,7 +315,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             reserveButton.textContent = 'Rezerwuję...';
             showStatus('Trwa rezerwacja...', 'info');
             try {
-                const response = await fetch('https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/create-reservation', {
+                const response = await fetch(`${API_BASE_URL}/api/create-reservation`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData),
                 });
                 if (response.ok) {
