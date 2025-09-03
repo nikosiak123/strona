@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zakręcone Korepetycje - Rezerwacja</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Zarezerwuj termin</h1>
+    </header>
+
+    <main class="container">
+        <!-- Ten kontener będzie pokazywany, jeśli link jest nieprawidłowy -->
+        <div id="invalidLinkContainer" style="display: none; padding: 2rem; text-align: center; width: 100%;">
+            <h2>Nieprawidłowy Link do Rezerwacji</h2>
+            <p>Wygląda na to, że link, którego używasz, jest niekompletny lub nieprawidłowy.</p>
+            <p>Skontaktuj się z obsługą klienta, aby otrzymać swój osobisty link do rezerwacji terminów.</p>
+        </div>
+
+        <!-- Ten kontener zawiera główną zawartość i jest pokazywany, jeśli link jest poprawny -->
+        <div id="bookingContainer" class="container-content" style="display: none;">
+            <aside class="sidebar">
+                <h2>Dane rezerwacji</h2>
+                <form id="reservationForm">
+                    <div class="form-group">
+                        <label for="firstName">Imię ucznia:</label>
+                        <input type="text" id="firstName" name="firstName" placeholder="np. Jan" required readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="lastName">Nazwisko ucznia:</label>
+                        <input type="text" id="lastName" name="lastName" placeholder="np. Kowalski" required readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="subject">Przedmiot:</label>
+                        <select id="subject" name="subject" required>
+                            <option value="">Wybierz przedmiot</option>
+                            <option value="matematyka">π Matematyka</option>
+                            <option value="polski">🇵🇱 Polski</option>
+                            <option value="angielski">🇬🇧 Angielski</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="schoolType">Typ Szkoły:</label>
+                        <select id="schoolType" name="schoolType" required>
+                            <option value="">Wybierz typ szkoły</option>
+                            <option value="szkola_podstawowa">Szkoła Podstawowa</option>
+                            <option value="liceum">Liceum</option>
+                            <option value="technikum">Technikum</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group" id="levelGroup" style="display:none;">
+                        <label for="schoolLevel">Poziom:</label>
+                        <select id="schoolLevel" name="schoolLevel" required>
+                            <option value="">Wybierz poziom</option>
+                            <option value="podstawowy">Podstawa</option>
+                            <option value="rozszerzony">Rozszerzenie</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="classGroup" style="display:none;">
+                        <label for="schoolClass">Klasa:</label>
+                        <select id="schoolClass" name="schoolClass" required>
+                            <option value="">Wybierz klasę</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="chooseTutorCheckbox" name="chooseTutorCheckbox">
+                        <label for="chooseTutorCheckbox">Chcę wybrać konkretnego korepetytora</label>
+                    </div>
+                    
+                    <div class="form-group" id="tutorGroup" style="display:none;">
+                        <label for="tutorSelect">Korepetytor:</label>
+                        <select id="tutorSelect" name="tutorSelect" required>
+                            <option value="">Wybierz korepetytora</option>
+                        </select>
+                    </div>
+                </form>
+            </aside>
+
+            <section class="main-content">
+                <h2>Wybierz dostępny termin</h2>
+                <div id="calendar-container">
+                    <p>Weryfikacja linku...</p>
+                </div>
+                <button type="submit" form="reservationForm" id="reserveButton" disabled>Zarezerwuj termin</button>
+                <div id="reservationStatus"></div>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2023 Zakręcone Korepetycje</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
