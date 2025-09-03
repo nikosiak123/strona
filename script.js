@@ -54,14 +54,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // ### POPRAWIONA FUNKCJA ###
     async function verifyClient(id) {
-        const response = await fetch(`https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/verify-client?clientID=${id}`);
+        // Upewnij się, że URL jest poprawny i zawiera ścieżkę do endpointu
+        const apiUrl = `https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/verify-client?clientID=${id}`;
+        console.log("Wysyłam zapytanie weryfikacyjne do:", apiUrl); // Dodatkowy log do debugowania
+        
+        const response = await fetch(apiUrl);
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || "Nie udało się zweryfikować klienta.");
+            // Spróbuj odczytać błąd jako JSON, jeśli się nie uda, użyj tekstu
+            let errorMessage = "Nie udało się zweryfikować klienta.";
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.message || errorMessage;
+            } catch (e) {
+                errorMessage = await response.text();
+            }
+            throw new Error(errorMessage);
         }
         return await response.json();
     }
+
 
     function prepareBookingForm(clientData) {
         firstNameInput.value = clientData.firstName;
@@ -69,7 +82,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         bookingContainer.style.display = 'flex';
     }
 
-    // --- POZOSTAŁE FUNKCJE ---
+    // --- POZOSTAŁE FUNKCJE (bez zmian) ---
+    // ... (skopiuj resztę pliku script.js z poprzedniej, pełnej wersji)
     let selectedSlotId = null;
     let selectedDate = null;
     let selectedTime = null;
