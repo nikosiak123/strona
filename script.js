@@ -1,4 +1,3 @@
-// Ten plik jest taki sam jak w mojej ostatniej wiadomości, która zawierała pełne kody
 document.addEventListener('DOMContentLoaded', async () => {
     // Odwołania do elementów
     const invalidLinkContainer = document.getElementById('invalidLinkContainer');
@@ -47,15 +46,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function displayInvalidLinkError(message = "Nieprawidłowy link. Skontaktuj się z obsługą klienta, aby otrzymać swój osobisty link do rezerwacji.") {
-        bookingContainer.style.display = 'none';
-        invalidLinkContainer.style.display = 'block';
-        invalidLinkContainer.querySelector('p').textContent = message;
+        if(bookingContainer) bookingContainer.style.display = 'none';
+        if(invalidLinkContainer) {
+            invalidLinkContainer.style.display = 'block';
+            const p = invalidLinkContainer.querySelector('p');
+            if (p) p.textContent = message;
+        }
     }
 
     async function verifyClient(id) {
-        const response = await fetch(`http://127.0.0.1:5000/api/verify-client?clientID=${id}`);
+        const response = await fetch(`https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/verify-client?clientID=${id}`);
         if (!response.ok) {
-            throw new Error((await response.json()).message || "Nie udało się zweryfikować klienta.");
+            const errorData = await response.json();
+            throw new Error(errorData.message || "Nie udało się zweryfikować klienta.");
         }
         return await response.json();
     }
@@ -66,7 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         bookingContainer.style.display = 'flex';
     }
 
-    // --- POZOSTAŁE FUNKCJE (skopiowane i dostosowane) ---
+    // --- POZOSTAŁE FUNKCJE ---
     let selectedSlotId = null;
     let selectedDate = null;
     let selectedTime = null;
@@ -245,7 +248,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function fetchAvailableSlots(startDate) {
         console.log(`Pobieram dostępne sloty z Airtable dla tygodnia od ${getFormattedDate(startDate)}...`);
         try {
-            const response = await fetch(`http://127.0.0.1:5000/api/get-schedule?startDate=${getFormattedDate(startDate)}`);
+            const response = await fetch(`https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/get-schedule?startDate=${getFormattedDate(startDate)}`);
             if (!response.ok) { throw new Error('Błąd pobierania danych z serwera'); }
             const scheduleFromApi = await response.json();
             const processedData = {};
@@ -278,4 +281,46 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         reservationForm.addEventListener('input', checkFormValidity);
 
-        reserveButton.addEventListener
+        reserveButton.addEventListener('click', async (e) => {
+            e.preventDefault();
+            if (!reservationForm.checkValidity() || !selectedSlotId) {
+                showStatus('Proszę wypełnić wszystkie wymagane pola i wybrać termin.', 'error');
+                return;
+            }
+            const formData = {
+                clientID: clientID, // Dodaj ClientID do wysyłanych danych
+                firstName: firstNameInput.value, lastName: lastNameInput.value, subject: subjectSelect.value,
+                schoolType: schoolTypeSelect.value,
+                schoolLevel: levelGroup.style.display === 'block' ? schoolLevelSelect.value : null,
+                schoolClass: classGroup.style.display === 'block' ? schoolClassSelect.value : null,
+                tutor: chooseTutorCheckbox.checked ? tutorSelect.value : "Dowolny dostępny",
+                selectedDate: selectedDate, selectedTime: selectedTime
+            };
+            reserveButton.disabled = true;
+            reserveButton.textContent = 'Rezerwuję...';
+            showStatus('Trwa rezerwacja...', 'info');
+            try {
+                const response = await fetch('https://zakrecone-korepetycje-api-467795448922.europe-central2.run.app/api/create-reservation', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData),
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    window.location.href = `confirmation.html?date=${formData.selectedDate}&time=${formData.selectedTime}&teamsUrl=${encodeURIComponent(result.teamsUrl)}&token=${result.managementToken}&clientID=${result.clientID}`;
+                } else {
+                    const errorData = await response.json();
+                    showStatus(`Błąd rezerwacji: ${errorData.message || 'Nie udało się utworzyć spotkania.'}`, 'error');
+                }
+            } catch (error) {
+                console.error('Błąd rezerwacji:', error);
+                showStatus('Wystąpił błąd podczas rezerwacji terminu.', 'error');
+            } finally {
+                reserveButton.disabled = false;
+                reserveButton.textContent = 'Zarezerwuj termin';
+                checkFormValidity();
+            }
+        });
+    }
+
+    // --- Start aplikacji ---
+    initializeApp();
+});
