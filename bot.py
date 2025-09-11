@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: Pełna (AI, Wiele Stron, Wykrywanie Zgody, Logowanie)
+# Wersja: Pełna, Poprawiona (AI, Wiele Stron, Wykrywanie Zgody, Logowanie)
 
 from flask import Flask, request, Response
 import threading
@@ -172,4 +172,105 @@ def process_event(event_payload):
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
 
-        if not sender_id or not
+        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
+            logging.warning(f"Pominięto zdarzenie (echo lub brak ID): {event_payload}")
+            return
+
+        page_config = PAGE_CONFIG.get(recipient_id)
+        if not page_config:
+            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGUROWANEJ strony: {recipient_id}")
+            return
+
+        page_token = page_config.get("token")
+        prompt_details = page_config.get("prompt_details")
+        page_name = page_config.get("name", "Nieznana Strona")
+
+        if not page_token or not prompt_details:
+            logging.error(f"Brak tokena lub prompt_details dla strony '{page_name}' (ID: {recipient_id})")
+            return
+
+        user_message_text = event_payload.get("message", {}).get("text", "").strip()
+        if not user_message_text:
+            logging.info("Otrzymano puste zdarzenie wiadomości (np. załącznik). Pomijam.")
+            return
+
+        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
+        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
+
+        history = load_history(sender_id)
+        history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
+
+        logging.info("Wysyłam zapytanie do AI Gemini...")
+        ai_response_raw = get_gemini_response(history, prompt_details)
+        logging.info(f"AI odpowiedziało (przed sprawdzeniem znacznika): '{ai_response_raw[:100]}...'")
+        
+        if AGREEMENT_MARKER in ai_response_raw:
+            logging.info(">>> ZNALEZIONO ZNACZNIK ZGODY! Użytkownik chce się zapisać. <<<")
+            
+            print("\n" + "="*50)
+            print(f"!!! UŻYTKOWNIK (PSID: {sender_id}) ZGODZIŁ SIĘ NA LEKCJĘ !!!")
+            print(f"!!! DOTYCZY STRONY: '{page_name}' !!!")
+            print("="*50 + "\n")
+
+            final_message_to_user = "Okej, zapisuję"
+            send_message(sender_id, final_message_to_user, page_token)
+            
+            history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
+        else:
+            logging.info("Brak znacznika zgody. Kontynuuję normalną rozmowę.")
+            send_message(sender_id, ai_response_raw, page_token)
+            history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
+
+        save_history(sender_id, history)
+        logging.info(f"--- Zakończono przetwarzanie dla {sender_id} ---")
+    except Exception as e:
+        logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
+
+# =====================================================================
+# === WEBHOOK FLASK ===================================================
+# =====================================================================
+
+@app.route('/webhook', methods=['GET'])
+def webhook_verification():
+    if request.args.get('hub.mode') == 'subscribe' and request.args.get('hub.verify_token') == VERIFY_TOKEN:
+        logging.info("Weryfikacja GET pomyślna!")
+        return Response(request.args.get('hub.challenge'), status=200)
+    else:
+        logging.warning("Weryfikacja GET nieudana.")
+        return Response("Verification failed", status=403)
+
+@app.route('/webhook', methods=['POST'])
+def webhook_handle():
+    logging.info("========== Otrzymano żądanie POST na /webhook ==========")
+    data = request.json
+    logging.info(f"Pełna treść żądania (payload): {data}")
+    
+    if data.get("object") == "page":
+        for entry in data.get("entry", []):
+            for event in entry.get("messaging", []):
+                thread = threading.Thread(target=process_event, args=(event,))
+                thread.start()
+        return Response("EVENT_RECEIVED", status=200)
+    else:
+        logging.warning("Otrzymano żądanie, ale obiekt nie jest 'page'. Pomijam.")
+        return Response("NOT_PAGE_EVENT", status=404)
+
+# =====================================================================
+# === URUCHOMIENIE SERWERA ============================================
+# =====================================================================
+if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    ensure_dir(HISTORY_DIR)
+    port = int(os.environ.get("PORT", 8080))
+    logging.info(f"Uruchamianie serwera na porcie {port}...")
+    try:
+        from waitress import serve
+        serve(app, host='0.0.0.0', port=port)
+    except ImportError:
+        logging.warning("Waitress nie jest zainstalowany. Uruchamiam w trybie deweloperskim Flask.")
+        app.run(host='0.0.0.0', port=port, debug=True)
