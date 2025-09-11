@@ -44,7 +44,7 @@ try:
     vertexai.init(project=PROJECT_ID, location=LOCATION)
     print("--- Inicjalizacja Vertex AI OK.")
     print(f"--- Ładowanie modelu: {MODEL_ID}")
-    gemini_model = GenerModel(MODEL_ID)
+    gemini_model = GenerativeModel(MODEL_ID)
     print(f"--- Model {MODEL_ID} załadowany OK.")
 except Exception as e:
     print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
