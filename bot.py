@@ -128,18 +128,26 @@ def get_gemini_response(history, prompt_details):
     system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
         prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
     
-    # ZMIANA: Budowanie promptu dla nowej biblioteki
+    # Budowanie promptu dla nowej biblioteki
     full_prompt_for_api = [
         {'role': 'user', 'parts': [system_instruction]},
         {'role': 'model', 'parts': ["Rozumiem. Jestem gotów do rozmowy z klientem."]}
     ] + history
 
     try:
-        # POPRAWKA W TEJ LINII: Zmieniono sposób przekazywania konfiguracji
+        # === OSTATECZNA POPRAWKA JEST TUTAJ ===
+        # Przekazujemy słownik 'GENERATION_CONFIG' bezpośrednio, bez żadnych dodatkowych obiektów.
         response = gemini_model.generate_content(
             full_prompt_for_api,
-            generation_config=genai.types.GenerationConfig(**GENERATION_CONFIG), 
+            generation_config=GENERATION_CONFIG, 
             safety_settings=SAFETY_SETTINGS)
+            
+        # Sprawdzamy, czy odpowiedź nie została zablokowana
+        if not response.parts:
+            block_reason = response.prompt_feedback.block_reason.name if response.prompt_feedback else "Nieznany"
+            logging.error(f"BŁĄD Gemini - ODPOWIEDŹ ZABLOKOWANA! Powód: {block_reason}")
+            return "Twoja wiadomość nie mogła zostać przetworzona (zasady bezpieczeństwa)."
+            
         return response.text.strip()
     except Exception as e:
         logging.error(f"BŁĄD wywołania Gemini: {e}")
