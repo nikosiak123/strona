@@ -1,32 +1,37 @@
 # -*- coding: utf-8 -*-
-# Wersja: Pełna z Google AI Studio (Klucz API)
+# Wersja: OSTATECZNA (Google AI Studio z Kluczem API)
 
 from flask import Flask, request, Response
 import threading
 import os
 import json
 import requests
-import google.generativeai as genai # ZMIANA: Nowa biblioteka
-from google.generativeai.types import HarmCategory, HarmBlockThreshold # ZMIANA: Nowe importy
+import google.generativeai as genai
 import errno
 import logging
 
 # --- Konfiguracja Ogólna ---
 app = Flask(__name__)
 VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "KOLAGEN")
-# ZMIANA: Wczytujemy klucz API ze zmiennej środowiskowej
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_ID = "gemini-1.5-flash-latest" # ZMIANA: Standardowa nazwa modelu dla AI Studio
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # Wczytujemy klucz API
+MODEL_ID = "gemini-1.5-flash-latest"
 FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
 HISTORY_DIR = "conversation_store"
 MAX_HISTORY_TURNS = 10
 
-# --- Znaczniki i Ustawienia Modelu ---
+# --- Znaczniki i Ustawienia Modelu (POPRAWIONA SKŁADNIA) ---
 AGREEMENT_MARKER = "[ZAPISZ_NA_LEKCJE]"
-GENERATION_CONFIG = genai.types.GenerationConfiguration(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
+# POPRAWKA: Definiujemy konfigurację jako zwykły słownik (dictionary)
+GENERATION_CONFIG = {
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 1024,
+}
+# POPRAWKA: Definiujemy ustawienia bezpieczeństwa jako listę słowników
 SAFETY_SETTINGS = [
-    {"category": HarmCategory.HARM_CATEGORY_HARASSMENT, "threshold": HarmBlockThreshold.BLOCK_ONLY_HIGH},
-    {"category": HarmCategory.HARM_CATEGORY_HATE_SPEECH, "threshold": HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE},
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
 ]
 
 # =====================================================================
@@ -49,7 +54,7 @@ except Exception as e:
 
 
 # =====================================================================
-# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI (bez zmian) ===================
+# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI ===============================
 # =====================================================================
 SYSTEM_INSTRUCTION_GENERAL = """
 Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji online.
@@ -58,18 +63,17 @@ Twoje zadanie jest oparte o następujące szczegóły dotyczące usługi, któr�
 {prompt_details}
 ---
 Twoje zadania:
-1.  **Odpowiadaj na pytania:** Udzielaj wyczerpujących odpowiedzi na pytania użytkownika, bazując wyłącznie na informacjach podanych powyżej.
-2.  **Zachęcaj do działania:** Po każdej odpowiedzi, aktywnie zachęcaj użytkownika do umówienia się na pierwszą lekcję.
-3.  **Wykryj zgodę:** Twoim najważniejszym zadaniem jest rozpoznanie, kiedy użytkownik jednoznacznie zgadza się na umówienie pierwszej lekcji.
-4.  **Użyj znacznika:** Kiedy wykryjesz zgodę, Twoja odpowiedź dla użytkownika MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
+1.  Odpowiadaj na pytania, bazując wyłącznie na informacjach podanych powyżej.
+2.  Zachęcaj do umówienia się na pierwszą lekcję.
+3.  Rozpoznaj, kiedy użytkownik jednoznacznie zgadza się na umówienie lekcji (np. "Tak, chcę", "Zapisz mnie").
+4.  Kiedy wykryjesz zgodę, Twoja odpowiedź dla użytkownika MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`. Przykład: "Doskonale! {agreement_marker}"
 
 Styl komunikacji: Zawsze zwracaj się do użytkownika per "Państwo". Bądź uprzejmy i profesjonalny.
 """
 
 # =====================================================================
-# === FUNKCJE POMOCNICZE (z drobnymi zmianami dla nowej biblioteki) =====
+# === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
-
 def load_config(config_file='config.json'):
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
@@ -104,7 +108,7 @@ def save_history(user_psid, history):
         logging.error(f"BŁĄD zapisu historii dla {user_psid}: {e}")
 
 # =====================================================================
-# === FUNKCJE KOMUNIKACJI (bez zmian) =================================
+# === FUNKCJE KOMUNIKACJI Z FB I AI ===================================
 # =====================================================================
 def send_message(recipient_id, message_text, page_access_token):
     if not all([recipient_id, message_text, page_access_token]):
@@ -128,21 +132,18 @@ def get_gemini_response(history, prompt_details):
     system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
         prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
     
-    # Budowanie promptu dla nowej biblioteki
     full_prompt_for_api = [
         {'role': 'user', 'parts': [system_instruction]},
         {'role': 'model', 'parts': ["Rozumiem. Jestem gotów do rozmowy z klientem."]}
     ] + history
 
     try:
-        # === OSTATECZNA POPRAWKA JEST TUTAJ ===
-        # Przekazujemy słownik 'GENERATION_CONFIG' bezpośrednio, bez żadnych dodatkowych obiektów.
+        # OSTATECZNA POPRAWKA: Przekazujemy słownik bezpośrednio
         response = gemini_model.generate_content(
             full_prompt_for_api,
             generation_config=GENERATION_CONFIG, 
             safety_settings=SAFETY_SETTINGS)
             
-        # Sprawdzamy, czy odpowiedź nie została zablokowana
         if not response.parts:
             block_reason = response.prompt_feedback.block_reason.name if response.prompt_feedback else "Nieznany"
             logging.error(f"BŁĄD Gemini - ODPOWIEDŹ ZABLOKOWANA! Powód: {block_reason}")
@@ -154,9 +155,8 @@ def get_gemini_response(history, prompt_details):
         return "Przepraszam, wystąpił nieoczekiwany błąd."
 
 # =====================================================================
-# === GŁÓWNA LOGIKA PRZETWARZANIA (z drobnymi zmianami) ================
+# === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
 # =====================================================================
-
 def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
@@ -209,7 +209,7 @@ def process_event(event_payload):
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
 # =====================================================================
-# === WEBHOOK FLASK (bez zmian) =======================================
+# === WEBHOOK FLASK ===================================================
 # =====================================================================
 @app.route('/webhook', methods=['GET'])
 def webhook_verification():
@@ -231,7 +231,7 @@ def webhook_handle():
         return Response("NOT_PAGE_EVENT", status=404)
 
 # =====================================================================
-# === URUCHOMIENIE SERWERA (bez zmian) ================================
+# === URUCHOMIENIE SERWERA ============================================
 # =====================================================================
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
