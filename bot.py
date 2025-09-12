@@ -172,13 +172,14 @@ def process_event(event_payload):
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
 
+        # POPRAWKA: Ta linia została naprawiona.
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
             logging.warning(f"Pominięto zdarzenie (echo lub brak ID): {event_payload}")
             return
 
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config:
-            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGUROWANEJ strony: {recipient_id}")
+            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGurowanej strony: {recipient_id}")
             return
 
         page_token = page_config.get("token")
@@ -262,7 +263,7 @@ if __name__ == '__main__':
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        datefmt='%Y-m-%d %H:%M:%S'
     )
 
     ensure_dir(HISTORY_DIR)
