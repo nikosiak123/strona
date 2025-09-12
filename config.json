@@ -1,7 +1,7 @@
 {
   "PAGE_CONFIG": {
     "ID_STRONY_FB_1": {
-      "name": "Korepetycje z Matematyki",
+      "name": "Zakręcone Korepetycje - MATEMATYKA",
       "token": "EAAJUltDBrJQBPWDZAW2ZBHoKrnIVzqL90h8BMbRlxUB4XRtqT3SVOkJRPWcJtAoqKv7KlPCuAvfzwU2wx7ATXxCuVLcdr0uoZBpfwsjlGi2gYswaxGDN8Pqe3lsoaZAenOFsgcmKI0zESEeLd6tkwKffqfp5YgZBHh1ZBYRh3PtrGVItjTojtM7wBkZBxVASxHzN0ZAntQccKAZDZD",
       "prompt_details": "Jesteś asystentem na stronie 'Korepetycje z Matematyki'. Twoim celem jest przedstawienie oferty korepetycji online z matematyki dla liceum i technikum. Lekcja trwa 60 minut i kosztuje 70 zł. Prowadzona jest przez Microsoft Teams. Twoim głównym zadaniem jest zachęcenie użytkownika do umówienia pierwszej, próbnej lekcji."
     }
