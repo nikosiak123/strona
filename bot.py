@@ -135,9 +135,10 @@ def get_gemini_response(history, prompt_details):
     ] + history
 
     try:
+        # POPRAWKA W TEJ LINII: Zmieniono sposób przekazywania konfiguracji
         response = gemini_model.generate_content(
             full_prompt_for_api,
-            generation_config=GENERATION_CONFIG,
+            generation_config=genai.types.GenerationConfig(**GENERATION_CONFIG), 
             safety_settings=SAFETY_SETTINGS)
         return response.text.strip()
     except Exception as e:
