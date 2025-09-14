@@ -18,8 +18,8 @@ import logging
 # --- Konfiguracja Ogólna ---
 app = Flask(__name__)
 VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "KOLAGEN")
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "singular-carver-459118-g5")
-LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "robust-slice-470921-i8")
+LOCATION = os.environ.get("GCP_LOCATION", "europe-central2") # Twoja maszyna jest w `europe-central2` (Warszawa)
 MODEL_ID = os.environ.get("VERTEX_MODEL_ID", "gemini-1.5-flash-001")
 FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
 HISTORY_DIR = "conversation_store"
