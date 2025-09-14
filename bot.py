@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: OSTATECZNA (Vertex AI z uprawnieniami maszyny)
+# Wersja: OSTATECZNA (Vertex AI z konfiguracją w pliku JSON)
 
 from flask import Flask, request, Response
 import threading
@@ -18,12 +18,25 @@ import logging
 # --- Konfiguracja Ogólna ---
 app = Flask(__name__)
 VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "KOLAGEN")
-PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "robust-slice-470921-i8")
-LOCATION = os.environ.get("GCP_LOCATION", "europe-central2") # Twoja maszyna jest w `europe-central2` (Warszawa)
-MODEL_ID = os.environ.get("VERTEX_MODEL_ID", "gemini-1.5-flash-001")
 FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
 HISTORY_DIR = "conversation_store"
 MAX_HISTORY_TURNS = 10
+
+# --- Wczytywanie konfiguracji z pliku ---
+config = {}
+try:
+    with open('config.json', 'r', encoding='utf-8') as f:
+        config = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError) as e:
+    print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
+    exit() # Zakończ działanie, jeśli nie ma konfiguracji
+
+AI_CONFIG = config.get("AI_CONFIG", {})
+PAGE_CONFIG = config.get("PAGE_CONFIG", {})
+
+PROJECT_ID = AI_CONFIG.get("PROJECT_ID")
+LOCATION = AI_CONFIG.get("LOCATION")
+MODEL_ID = AI_CONFIG.get("MODEL_ID")
 
 # --- Znaczniki i Ustawienia Modelu ---
 AGREEMENT_MARKER = "[ZAPISZ_NA_LEKCJE]"
@@ -38,12 +51,15 @@ SAFETY_SETTINGS = [
 # =====================================================================
 gemini_model = None
 try:
-    print(f"--- Inicjalizowanie Vertex AI: Projekt={PROJECT_ID}, Lokalizacja={LOCATION}")
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    print("--- Inicjalizacja Vertex AI OK.")
-    print(f"--- Ładowanie modelu: {MODEL_ID}")
-    gemini_model = GenerativeModel(MODEL_ID)
-    print(f"--- Model {MODEL_ID} załadowany OK.")
+    if not all([PROJECT_ID, LOCATION, MODEL_ID]):
+        print("!!! KRYTYCZNY BŁĄD: Brak pełnej konfiguracji AI (PROJECT_ID, LOCATION, MODEL_ID) w pliku config.json")
+    else:
+        print(f"--- Inicjalizowanie Vertex AI: Projekt={PROJECT_ID}, Lokalizacja={LOCATION}")
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        print("--- Inicjalizacja Vertex AI OK.")
+        print(f"--- Ładowanie modelu: {MODEL_ID}")
+        gemini_model = GenerativeModel(MODEL_ID)
+        print(f"--- Model {MODEL_ID} załadowany OK.")
 except Exception as e:
     print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
     logging.critical(f"KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", exc_info=True)
@@ -96,14 +112,6 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
-
-def load_config(config_file='config.json'):
-    try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            return json.load(f).get("PAGE_CONFIG", {})
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        logging.critical(f"KRYTYCZNY BŁĄD: Nie można wczytać pliku konfiguracyjnego '{config_file}': {e}")
-        return {}
 
 def ensure_dir(directory):
     try:
@@ -190,16 +198,14 @@ def get_gemini_response(history, prompt_details):
 def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
-        PAGE_CONFIG = load_config()
         if not PAGE_CONFIG:
-            logging.error("Brak konfiguracji PAGE_CONFIG w pliku config.json. Wątek kończy pracę.")
+            logging.error("Brak konfiguracji PAGE_CONFIG. Wątek kończy pracę.")
             return
             
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
 
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
-            logging.warning(f"Pominięto zdarzenie (echo lub brak ID): {event_payload}")
             return
 
         page_config = PAGE_CONFIG.get(recipient_id)
@@ -217,7 +223,6 @@ def process_event(event_payload):
 
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text:
-            logging.info("Otrzymano puste zdarzenie wiadomości (np. załącznik). Pomijam.")
             return
 
         logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
