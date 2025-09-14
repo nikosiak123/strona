@@ -173,22 +173,34 @@ def get_gemini_response(history, prompt_details):
     if not gemini_model:
         logging.error("KRYTYCZNY BŁĄD: Model Gemini niedostępny!")
         return "Przepraszam, mam chwilowy problem z moim systemem. Proszę spróbować ponownie za chwilę."
+    
     system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
         prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
+    
     full_prompt = [
         Content(role="user", parts=[Part.from_text(system_instruction)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])
     ] + history
+    
     try:
         response = gemini_model.generate_content(
             full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
-        if not response.parts:
-            block_reason = response.prompt_feedback.block_reason.name if response.prompt_feedback else "Nieznany"
+        
+        # === OSTATECZNA POPRAWKA JEST TUTAJ ===
+        # Najpierw sprawdzamy, czy odpowiedź nie została zablokowana przez filtry bezpieczeństwa.
+        # Jeśli lista 'candidates' jest pusta, to znaczy, że odpowiedź została zablokowana.
+        if not response.candidates:
+            block_reason = "Nieznany"
+            if response.prompt_feedback:
+                 block_reason = response.prompt_feedback.block_reason.name
             logging.error(f"BŁĄD Gemini - ODPOWIEDŹ ZABLOKOWANA! Powód: {block_reason}")
             return "Twoja wiadomość nie mogła zostać przetworzona (zasady bezpieczeństwa)."
+        
+        # Jeśli wszystko jest w porządku, pobieramy tekst z poprawnej, zagnieżdżonej struktury.
         return "".join(part.text for part in response.candidates[0].content.parts).strip()
+
     except Exception as e:
-        logging.error(f"BŁĄD wywołania Gemini: {e}")
+        logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True) # Dodano exc_info dla pełniejszego logu
         return "Przepraszam, wystąpił nieoczekiwany błąd. Proszę spróbować ponownie."
 
 # =====================================================================
