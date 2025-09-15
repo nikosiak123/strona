@@ -156,9 +156,9 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
         logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
         first_name, last_name = get_user_profile(psid, page_access_token)
         
+        # === POPRAWKA JEST TUTAJ: Usunięto pole "Źródło" ===
         new_client_data = {
-            "ClientID": psid,
-            "Źródło": "Messenger Bot"
+            "ClientID": psid
         }
         if first_name:
             new_client_data["Imię"] = first_name
