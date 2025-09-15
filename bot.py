@@ -335,6 +335,9 @@ def webhook_handle():
     else:
         return Response("NOT_PAGE_EVENT", status=404)
 
+# =====================================================================
+# === URUCHOMIENIE SERWERA ============================================
+# =====================================================================
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     ensure_dir(HISTORY_DIR)
@@ -342,4 +345,9 @@ if __name__ == '__main__':
     logging.info(f"Uruchamianie serwera na porcie {port}...")
     try:
         from waitress import serve
-        serve(app, host='Here is the original image:
+        # Ta linia będzie używana, gdy skrypt jest uruchamiany przez Gunicorn
+        # W Gunicornie, app:app jest przekazywane jako argument, więc ten blok się nie wykona.
+        # Zostawiamy to dla testów lokalnych.
+        serve(app, host='0.0.0.0', port=port)
+    except ImportError:
+        app.run(host='0.0.0.0', port=port, debug=True)
