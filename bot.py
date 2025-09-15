@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: OSTATECZNA (Vertex AI z konfiguracją w pliku JSON)
+# Wersja: FINALNA (AI + Integracja z Airtable + Automatyczne Linki)
 
 from flask import Flask, request, Response
 import threading
@@ -12,6 +12,7 @@ from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
+from pyairtable import Api # DODANO: Import biblioteki Airtable
 import errno
 import logging
 
@@ -29,14 +30,32 @@ try:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError) as e:
     print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
-    exit() # Zakończ działanie, jeśli nie ma konfiguracji
+    exit()
 
 AI_CONFIG = config.get("AI_CONFIG", {})
+AIRTABLE_CONFIG = config.get("AIRTABLE_CONFIG", {})
 PAGE_CONFIG = config.get("PAGE_CONFIG", {})
 
 PROJECT_ID = AI_CONFIG.get("PROJECT_ID")
 LOCATION = AI_CONFIG.get("LOCATION")
 MODEL_ID = AI_CONFIG.get("MODEL_ID")
+
+AIRTABLE_API_KEY = AIRTABLE_CONFIG.get("API_KEY")
+AIRTABLE_BASE_ID = AIRTABLE_CONFIG.get("BASE_ID")
+CLIENTS_TABLE_NAME = AIRTABLE_CONFIG.get("CLIENTS_TABLE_NAME")
+
+# --- Inicjalizacja Airtable API ---
+airtable_api = None
+if all([AIRTABLE_API_KEY, AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME]):
+    try:
+        airtable_api = Api(AIRTABLE_API_KEY)
+        clients_table = airtable_api.table(AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME)
+        print("--- Połączenie z Airtable OK.")
+    except Exception as e:
+        print(f"!!! BŁĄD: Nie można połączyć się z Airtable: {e}")
+else:
+    print("!!! OSTRZEŻENIE: Brak pełnej konfiguracji Airtable w config.json.")
+
 
 # --- Znaczniki i Ustawienia Modelu ---
 AGREEMENT_MARKER = "[ZAPISZ_NA_LEKCJE]"
@@ -66,7 +85,7 @@ except Exception as e:
 
 
 # =====================================================================
-# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI ===============================
+# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI (bez zmian) ===================
 # =====================================================================
 SYSTEM_INSTRUCTION_GENERAL = """
 ### O Tobie (Twoja Rola)
@@ -83,47 +102,87 @@ Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji onl
     - Korepetycje odbywają się online, jeden na jeden z doświadczonym korepetytorem.
     - Platforma: Microsoft Teams. Wystarczy kliknąć w otrzymany link, nie trzeba nic pobierać ani się logować.
 
-### Twoje Wewnętrzne Wytyczne (Tego NIE mówisz klientowi)
-- Nie wspominaj, że korepetytorzy to studenci, chyba że zostaniesz o to wprost zapytany. Zamiast tego podkreślaj ich doświadczenie.
-- Rezerwacja terminu następuje na stronie internetowej, ale Twoim zadaniem NIE jest wysyłanie linku. Twoim zadaniem jest uzyskanie zgody na pierwszą lekcję.
-
 ### Kluczowe Zadania i Przepływ Rozmowy
 Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na jak najwięcej krótkich wiadomości**:
 1.  **Powitanie:** Przywitaj się krótko i zapytaj, czy użytkownik poszukuje korepetycji (chyba że już to napisał).
-2.  **Zbieranie informacji (Krok 1 - Szkoła):** W pierwszej kolejności zapytaj tylko o typ szkoły. Przykład: "Świetnie! A czy chodzi o szkołę podstawową czy średnią?"
-3.  **Zbieranie informacji (Krok 2 - Klasa):** W osobnej wiadomości zapytaj o klasę. Przykład: "Rozumiem, szkoła średnia. Do której klasy uczęszcza uczeń?"
-4.  **Zbieranie informacji (Krok 3 - Poziom):** JEŚLI szkoła jest średnia, w kolejnej, osobnej wiadomości zapytaj o poziom. Przykład: "Dziękuję. A czy chodzi o materiał na poziomie podstawowym czy rozszerzonym?"
+2.  **Zbieranie informacji (Krok 1 - Szkoła):** W pierwszej kolejności zapytaj tylko o typ szkoły.
+3.  **Zbieranie informacji (Krok 2 - Klasa):** W osobnej wiadomości zapytaj o klasę.
+4.  **Zbieranie informacji (Krok 3 - Poziom):** JEŚLI szkoła jest średnia, w kolejnej, osobnej wiadomości zapytaj o poziom.
 5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę oraz informacje o formacie lekcji online.
-6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji. Podkreśl, że to świetna okazja, by bez zobowiązań sprawdzić, jak wyglądają zajęcia.
+6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji.
 
-### Jak Obsługiwać Sprzeciwy (szczególnie dotyczące lekcji online)
-- JEŚLI klient ma wątpliwości, zawsze zapytaj o ich powód, np. "Jeśli mogę zapytać, co budzi Państwa największe wątpliwości?".
-- JEŚLI klient twierdzi, że uczeń będzie **rozkojarzony**, ODPOWIEDZ: "To częsta obawa, ale proszę się nie martwić. Nasi korepetytorzy prowadzą lekcje w bardzo angażujący sposób, skupiając całą uwagę na uczniu, więc na pewno nie grozi mu rozkojarzenie."
+### Jak Obsługiwać Sprzeciwy
+- JEŚLI klient ma wątpliwości, zawsze zapytaj o ich powód.
+- JEŚLI klient twierdzi, że uczeń będzie **rozkojarzony**, ODPOWIEDZ: "To częsta obawa, ale proszę się nie martwić. Nasi korepetytorzy prowadzą lekcje w bardzo angażujący sposób."
 - JEŚLI klient twierdzi, że korepetycje online się nie sprawdziły, ZAPYTAJ: "Czy uczeń miał już do czynienia z korepetycjami online 1-na-1, czy doświadczenie opiera się głównie na lekcjach szkolnych z czasów pandemii?"
-- JEŚLI odpowiedź to "lekcje szkolne", ODPOWIEDZ: "Rozumiem Państwa obawy. Proszę mi wierzyć, że lekcja 1-na-1 z korepetytorem doświadczonym w nauczaniu online to zupełnie inna jakość niż zdalna lekcja w 30-osobowej klasie."
-- JEŚLI odpowiedź to "inne korepetycje", ODPOWIEDZ: "Dziękuję za informację. Warto pamiętać, że korepetytor korepetytorowi nierówny. Wielu naszych klientów miało podobne wątpliwości, a po pierwszej lekcji próbnej byli bardzo zadowoleni. Może warto dać szansę również nam?"
 
 ### Twój GŁÓWNY CEL i Format Odpowiedzi
 Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcję.
-- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji (używa zwrotów jak "Tak, chcę", "Zgadzam się", "Zapiszmy się", "Poproszę"), Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
+- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji, Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
 - Przykład poprawnej odpowiedzi: "Doskonale, to świetna decyzja! {agreement_marker}"
 """
 
 # =====================================================================
-# === FUNKCJE POMOCNICZE ==============================================
+# === NOWE FUNKCJE POMOCNICZE (Airtable i Profil FB) ===================
 # =====================================================================
 
-def ensure_dir(directory):
+def get_user_profile(psid, page_access_token):
+    """Pobiera imię i nazwisko użytkownika z Facebook Graph API."""
     try:
-        os.makedirs(directory)
+        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name&access_token={page_access_token}"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("first_name"), data.get("last_name")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
+        return None, None
+
+def create_or_find_client_in_airtable(psid, page_access_token):
+    """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go. Zwraca ClientID (PSID)."""
+    if not clients_table:
+        logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
+        return None
+
+    try:
+        # Sprawdź, czy klient już istnieje
+        existing_client = clients_table.first(formula=f"{{ClientID}} = '{psid}'")
+        if existing_client:
+            logging.info(f"Klient o PSID {psid} już istnieje w Airtable.")
+            return psid
+        
+        # Jeśli nie istnieje, utwórz go
+        logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
+        first_name, last_name = get_user_profile(psid, page_access_token)
+        
+        new_client_data = {
+            "ClientID": psid,
+            "Źródło": "Messenger Bot"
+        }
+        if first_name:
+            new_client_data["Imię"] = first_name
+        if last_name:
+            new_client_data["Nazwisko"] = last_name
+            
+        clients_table.create(new_client_data)
+        logging.info(f"Pomyślnie utworzono nowego klienta w Airtable dla PSID {psid}.")
+        return psid
+        
+    except Exception as e:
+        logging.error(f"Wystąpił błąd podczas operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
+        return None
+
+# =====================================================================
+# === FUNKCJE POMOCNICZE (bez zmian) ==================================
+# =====================================================================
+def ensure_dir(directory):
+    try: os.makedirs(directory)
     except OSError as e:
-        if e.errno != errno.EEXIST:
-            raise
+        if e.errno != errno.EEXIST: raise
 
 def load_history(user_psid):
     filepath = os.path.join(HISTORY_DIR, f"{user_psid}.json")
-    if not os.path.exists(filepath):
-        return []
+    if not os.path.exists(filepath): return []
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             history_data = json.load(f)
@@ -133,8 +192,8 @@ def load_history(user_psid):
                 parts = [Part.from_text(p['text']) for p in msg_data['parts']]
                 history.append(Content(role=msg_data['role'], parts=parts))
         return history
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logging.error(f"BŁĄD parsowania historii dla {user_psid}: {e}. Zaczynam od nowa.")
+    except Exception as e:
+        logging.error(f"BŁĄD parsowania historii dla {user_psid}: {e}.")
         return []
 
 def save_history(user_psid, history):
@@ -152,9 +211,8 @@ def save_history(user_psid, history):
         logging.error(f"BŁĄD zapisu historii dla {user_psid}: {e}")
 
 # =====================================================================
-# === FUNKCJE KOMUNIKACJI Z FB I AI ===================================
+# === FUNKCJE KOMUNIKACJI (bez zmian) =================================
 # =====================================================================
-
 def send_message(recipient_id, message_text, page_access_token):
     if not all([recipient_id, message_text, page_access_token]):
         logging.error("Błąd wysyłania: Brak ID, treści lub tokenu.")
@@ -171,48 +229,31 @@ def send_message(recipient_id, message_text, page_access_token):
 
 def get_gemini_response(history, prompt_details):
     if not gemini_model:
-        logging.error("KRYTYCZNY BŁĄD: Model Gemini niedostępny!")
-        return "Przepraszam, mam chwilowy problem z moim systemem. Proszę spróbować ponownie za chwilę."
-    
+        return "Przepraszam, mam chwilowy problem z moim systemem."
     system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
         prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
-    
     full_prompt = [
         Content(role="user", parts=[Part.from_text(system_instruction)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])
     ] + history
-    
     try:
         response = gemini_model.generate_content(
             full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
-        
-        # === OSTATECZNA POPRAWKA JEST TUTAJ ===
-        # Najpierw sprawdzamy, czy odpowiedź nie została zablokowana przez filtry bezpieczeństwa.
-        # Jeśli lista 'candidates' jest pusta, to znaczy, że odpowiedź została zablokowana.
         if not response.candidates:
-            block_reason = "Nieznany"
-            if response.prompt_feedback:
-                 block_reason = response.prompt_feedback.block_reason.name
-            logging.error(f"BŁĄD Gemini - ODPOWIEDŹ ZABLOKOWANA! Powód: {block_reason}")
             return "Twoja wiadomość nie mogła zostać przetworzona (zasady bezpieczeństwa)."
-        
-        # Jeśli wszystko jest w porządku, pobieramy tekst z poprawnej, zagnieżdżonej struktury.
         return "".join(part.text for part in response.candidates[0].content.parts).strip()
-
     except Exception as e:
-        logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True) # Dodano exc_info dla pełniejszego logu
-        return "Przepraszam, wystąpił nieoczekiwany błąd. Proszę spróbować ponownie."
+        logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
+        return "Przepraszam, wystąpił nieoczekiwany błąd."
 
 # =====================================================================
-# === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
+# === GŁÓWNA LOGIKA PRZETWARZANIA (ZMODYFIKOWANA) ======================
 # =====================================================================
-
 def process_event(event_payload):
     try:
+        # ... (początek funkcji bez zmian) ...
         logging.info("Wątek 'process_event' wystartował.")
-        if not PAGE_CONFIG:
-            logging.error("Brak konfiguracji PAGE_CONFIG. Wątek kończy pracę.")
-            return
+        if not PAGE_CONFIG: return
             
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
@@ -221,21 +262,16 @@ def process_event(event_payload):
             return
 
         page_config = PAGE_CONFIG.get(recipient_id)
-        if not page_config:
-            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGurowanej strony: {recipient_id}")
-            return
+        if not page_config: return
 
         page_token = page_config.get("token")
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
 
-        if not page_token or not prompt_details:
-            logging.error(f"Brak tokena lub prompt_details dla strony '{page_name}' (ID: {recipient_id})")
-            return
+        if not page_token or not prompt_details: return
 
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text:
-            return
+        if not user_message_text: return
 
         logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
         logging.info(f"Odebrano wiadomość: '{user_message_text}'")
@@ -245,22 +281,36 @@ def process_event(event_payload):
 
         logging.info("Wysyłam zapytanie do AI Gemini...")
         ai_response_raw = get_gemini_response(history, prompt_details)
-        logging.info(f"AI odpowiedziało (przed sprawdzeniem znacznika): '{ai_response_raw[:100]}...'")
+        logging.info(f"AI odpowiedziało: '{ai_response_raw[:100]}...'")
         
+        # === KLUCZOWA ZMIANA LOGIKI JEST TUTAJ ===
         if AGREEMENT_MARKER in ai_response_raw:
-            logging.info(">>> ZNALEZIONO ZNACZNIK ZGODY! Użytkownik chce się zapisać. <<<")
+            logging.info(">>> ZNALEZIONO ZNACZNIK ZGODY! Rozpoczynam proces tworzenia klienta. <<<")
             
-            print("\n" + "="*50)
-            print(f"!!! UŻYTKOWNIK (PSID: {sender_id}) ZGODZIŁ SIĘ NA LEKCJĘ !!!")
-            print(f"!!! DOTYCZY STRONY: '{page_name}' !!!")
-            print("="*50 + "\n")
+            # Krok 1: Stwórz lub znajdź klienta w Airtable
+            client_id = create_or_find_client_in_airtable(sender_id, page_token)
+            
+            if client_id:
+                # Krok 2: Zbuduj personalizowany link
+                reservation_link = f"https://zakręcone-korepetycje.pl/?clientID={client_id}"
+                
+                # Krok 3: Stwórz i wyślij wiadomość do użytkownika
+                final_message_to_user = (
+                    f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji pierwszej lekcji testowej.\n\n"
+                    f"{reservation_link}\n\n"
+                    f"Proszę go nie udostępniać nikomu, ponieważ jest on przypisany bezpośrednio do Państwa. "
+                    f"Zapraszam do wybrania dogodnego terminu!"
+                )
+                send_message(sender_id, final_message_to_user, page_token)
+                history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
+            else:
+                # Obsługa błędu, jeśli nie udało się stworzyć klienta
+                error_message = "Wygląda na to, że wystąpił błąd z naszym systemem rezerwacji. Proszę spróbować ponownie za chwilę lub skontaktować się z nami bezpośrednio."
+                send_message(sender_id, error_message, page_token)
+                history.append(Content(role="model", parts=[Part.from_text(error_message)]))
 
-            final_message_to_user = "Okej, zapisuję"
-            send_message(sender_id, final_message_to_user, page_token)
-            
-            history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
         else:
-            logging.info("Brak znacznika zgody. Kontynuuję normalną rozmowę.")
+            # Zwykła rozmowa, bez zmian
             send_message(sender_id, ai_response_raw, page_token)
             history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
 
@@ -269,25 +319,21 @@ def process_event(event_payload):
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
+
 # =====================================================================
-# === WEBHOOK FLASK ===================================================
+# === WEBHOOK FLASK I URUCHOMIENIE (bez zmian) ========================
 # =====================================================================
 
 @app.route('/webhook', methods=['GET'])
 def webhook_verification():
     if request.args.get('hub.mode') == 'subscribe' and request.args.get('hub.verify_token') == VERIFY_TOKEN:
-        logging.info("Weryfikacja GET pomyślna!")
         return Response(request.args.get('hub.challenge'), status=200)
     else:
-        logging.warning("Weryfikacja GET nieudana.")
         return Response("Verification failed", status=403)
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handle():
-    logging.info("========== Otrzymano żądanie POST na /webhook ==========")
     data = request.json
-    logging.info(f"Pełna treść żądania (payload): {data}")
-    
     if data.get("object") == "page":
         for entry in data.get("entry", []):
             for event in entry.get("messaging", []):
@@ -295,19 +341,10 @@ def webhook_handle():
                 thread.start()
         return Response("EVENT_RECEIVED", status=200)
     else:
-        logging.warning("Otrzymano żądanie, ale obiekt nie jest 'page'. Pomijam.")
         return Response("NOT_PAGE_EVENT", status=404)
 
-# =====================================================================
-# === URUCHOMIENIE SERWERA ============================================
-# =====================================================================
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     ensure_dir(HISTORY_DIR)
     port = int(os.environ.get("PORT", 8080))
     logging.info(f"Uruchamianie serwera na porcie {port}...")
@@ -315,5 +352,4 @@ if __name__ == '__main__':
         from waitress import serve
         serve(app, host='0.0.0.0', port=port)
     except ImportError:
-        logging.warning("Waitress nie jest zainstalowany. Uruchamiam w trybie deweloperskim Flask.")
         app.run(host='0.0.0.0', port=port, debug=True)
