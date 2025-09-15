@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: FINALNA (AI + Integracja z Airtable + Automatyczne Linki)
+# Wersja: FINALNA (AI + Integracja z Airtable + Inteligentna Rozmowa)
 
 from flask import Flask, request, Response
 import threading
@@ -12,7 +12,7 @@ from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
-from pyairtable import Api # DODANO: Import biblioteki Airtable
+from pyairtable import Api
 import errno
 import logging
 
@@ -46,6 +46,7 @@ CLIENTS_TABLE_NAME = AIRTABLE_CONFIG.get("CLIENTS_TABLE_NAME")
 
 # --- Inicjalizacja Airtable API ---
 airtable_api = None
+clients_table = None # Ważne, aby zdefiniować globalnie
 if all([AIRTABLE_API_KEY, AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME]):
     try:
         airtable_api = Api(AIRTABLE_API_KEY)
@@ -85,40 +86,40 @@ except Exception as e:
 
 
 # =====================================================================
-# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI (bez zmian) ===================
+# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI (ZAKTUALIZOWANA) ===============
 # =====================================================================
 SYSTEM_INSTRUCTION_GENERAL = """
 ### O Tobie (Twoja Rola)
 Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji online. Twoim celem jest przekonanie użytkownika do umówienia pierwszej, testowej lekcji.
-- **Styl Komunikacji:** Twoje wiadomości muszą być KRÓTKIE i angażujące. Zawsze kończ je pytaniem, aby zachęcić do odpowiedzi. Zawsze zwracaj się do użytkownika per "Państwo". Bądź uprzejmy i profesjonalny.
+- **Styl Komunikacji:** Twoje wiadomości muszą być KRÓTKIE i angażujące. Zawsze kończ je pytaniem. Zawsze zwracaj się do użytkownika per "Państwo". Pamiętaj, że możesz rozmawiać zarówno z rodzicem, jak i bezpośrednio z uczniem.
 
-### Informacje o Usłudze, które przekazujesz klientom
+### Informacje o Usłudze
 1.  **Cennik (za lekcję 60 minut):**
     - Szkoła Podstawowa: 65 zł
     - Szkoła średnia (klasy niematuralne, podstawa): 70 zł
     - Szkoła średnia (klasy niematuralne, rozszerzenie): 75 zł
     - Szkoła średnia (klasa maturalna, podstawa i rozszerzenie): 80 zł
 2.  **Format lekcji:**
-    - Korepetycje odbywają się online, jeden na jeden z doświadczonym korepetytorem.
-    - Platforma: Microsoft Teams. Wystarczy kliknąć w otrzymany link, nie trzeba nic pobierać ani się logować.
+    - Korepetycje odbywają się online, 1-na-1 z doświadczonym korepetytorem.
+    - Platforma: Microsoft Teams. Wystarczy kliknąć w otrzymany link, nie trzeba nic pobierać.
 
 ### Kluczowe Zadania i Przepływ Rozmowy
-Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na jak najwięcej krótkich wiadomości**:
-1.  **Powitanie:** Przywitaj się krótko i zapytaj, czy użytkownik poszukuje korepetycji (chyba że już to napisał).
-2.  **Zbieranie informacji (Krok 1 - Szkoła):** W pierwszej kolejności zapytaj tylko o typ szkoły.
-3.  **Zbieranie informacji (Krok 2 - Klasa):** W osobnej wiadomości zapytaj o klasę.
-4.  **Zbieranie informacji (Krok 3 - Poziom):** JEŚLI szkoła jest średnia, w kolejnej, osobnej wiadomości zapytaj o poziom.
-5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę oraz informacje o formacie lekcji online.
+Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wiadomości i NIE zadając pytań, jeśli znasz już odpowiedź**:
+1.  **Powitanie:** Przywitaj się i zapytaj, w czym możesz pomóc (np. "Dzień dobry! W czym mogę Państwu pomóc?").
+2.  **Zbieranie informacji (Krok 1 - Szkoła i klasa):** Zapytaj o klasę i typ szkoły ucznia. Przykład: "Świetnie! Do której klasy i jakiego typu szkoły uczęszcza uczeń?"
+3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły (np. "8 klasa podstawówki"), przejdź od razu do prezentacji oferty. NIE dopytuj ponownie o typ szkoły.
+4.  **Zbieranie informacji (Krok 2 - Poziom):** JEŚLI typ szkoły to liceum lub technikum i nie podano poziomu, w osobnej wiadomości zapytaj o poziom. Przykład: "Dziękuję. A czy chodzi o materiał na poziomie podstawowym czy rozszerzonym?"
+5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę i format lekcji.
 6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji.
 
 ### Jak Obsługiwać Sprzeciwy
-- JEŚLI klient ma wątpliwości, zawsze zapytaj o ich powód.
+- JEŚLI klient ma wątpliwości, zapytaj o ich powód.
 - JEŚLI klient twierdzi, że uczeń będzie **rozkojarzony**, ODPOWIEDZ: "To częsta obawa, ale proszę się nie martwić. Nasi korepetytorzy prowadzą lekcje w bardzo angażujący sposób."
 - JEŚLI klient twierdzi, że korepetycje online się nie sprawdziły, ZAPYTAJ: "Czy uczeń miał już do czynienia z korepetycjami online 1-na-1, czy doświadczenie opiera się głównie na lekcjach szkolnych z czasów pandemii?"
 
 ### Twój GŁÓWNY CEL i Format Odpowiedzi
 Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcję.
-- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji, Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
+- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji (używa zwrotów jak "Tak, chcę", "Zgadzam się", "Zapiszmy się", "Poproszę"), Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
 - Przykład poprawnej odpowiedzi: "Doskonale, to świetna decyzja! {agreement_marker}"
 """
 
@@ -138,15 +139,15 @@ def get_user_profile(psid, page_access_token):
         logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
         return None, None
 
-def create_or_find_client_in_airtable(psid, page_access_token):
+def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
     """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go. Zwraca ClientID (PSID)."""
-    if not clients_table:
+    if not clients_table_obj:
         logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
         return None
 
     try:
         # Sprawdź, czy klient już istnieje
-        existing_client = clients_table.first(formula=f"{{ClientID}} = '{psid}'")
+        existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
         if existing_client:
             logging.info(f"Klient o PSID {psid} już istnieje w Airtable.")
             return psid
@@ -164,7 +165,7 @@ def create_or_find_client_in_airtable(psid, page_access_token):
         if last_name:
             new_client_data["Nazwisko"] = last_name
             
-        clients_table.create(new_client_data)
+        clients_table_obj.create(new_client_data)
         logging.info(f"Pomyślnie utworzono nowego klienta w Airtable dla PSID {psid}.")
         return psid
         
@@ -251,7 +252,6 @@ def get_gemini_response(history, prompt_details):
 # =====================================================================
 def process_event(event_payload):
     try:
-        # ... (początek funkcji bez zmian) ...
         logging.info("Wątek 'process_event' wystartował.")
         if not PAGE_CONFIG: return
             
@@ -283,18 +283,14 @@ def process_event(event_payload):
         ai_response_raw = get_gemini_response(history, prompt_details)
         logging.info(f"AI odpowiedziało: '{ai_response_raw[:100]}...'")
         
-        # === KLUCZOWA ZMIANA LOGIKI JEST TUTAJ ===
         if AGREEMENT_MARKER in ai_response_raw:
             logging.info(">>> ZNALEZIONO ZNACZNIK ZGODY! Rozpoczynam proces tworzenia klienta. <<<")
             
-            # Krok 1: Stwórz lub znajdź klienta w Airtable
-            client_id = create_or_find_client_in_airtable(sender_id, page_token)
+            # POPRAWKA: Przekazujemy obiekt `clients_table` do funkcji
+            client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             
             if client_id:
-                # Krok 2: Zbuduj personalizowany link
                 reservation_link = f"https://zakręcone-korepetycje.pl/?clientID={client_id}"
-                
-                # Krok 3: Stwórz i wyślij wiadomość do użytkownika
                 final_message_to_user = (
                     f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji pierwszej lekcji testowej.\n\n"
                     f"{reservation_link}\n\n"
@@ -304,13 +300,10 @@ def process_event(event_payload):
                 send_message(sender_id, final_message_to_user, page_token)
                 history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
             else:
-                # Obsługa błędu, jeśli nie udało się stworzyć klienta
                 error_message = "Wygląda na to, że wystąpił błąd z naszym systemem rezerwacji. Proszę spróbować ponownie za chwilę lub skontaktować się z nami bezpośrednio."
                 send_message(sender_id, error_message, page_token)
                 history.append(Content(role="model", parts=[Part.from_text(error_message)]))
-
         else:
-            # Zwykła rozmowa, bez zmian
             send_message(sender_id, ai_response_raw, page_token)
             history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
 
@@ -318,7 +311,6 @@ def process_event(event_payload):
         logging.info(f"--- Zakończono przetwarzanie dla {sender_id} ---")
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
-
 
 # =====================================================================
 # === WEBHOOK FLASK I URUCHOMIENIE (bez zmian) ========================
@@ -350,6 +342,4 @@ if __name__ == '__main__':
     logging.info(f"Uruchamianie serwera na porcie {port}...")
     try:
         from waitress import serve
-        serve(app, host='0.0.0.0', port=port)
-    except ImportError:
-        app.run(host='0.0.0.0', port=port, debug=True)
+        serve(app, host='Here is the original image:
