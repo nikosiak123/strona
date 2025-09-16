@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: FINALNA (AI + Integracja z Airtable + Inteligentna Rozmowa)
+# Wersja: FINALNA (AI + Integracja z Airtable + Automatyczne Linki)
 
 from flask import Flask, request, Response
 import threading
@@ -12,7 +12,7 @@ from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
-from pyairtable import Api
+from pyairtable import Api # DODANO: Import biblioteki Airtable
 import errno
 import logging
 
@@ -46,7 +46,6 @@ CLIENTS_TABLE_NAME = AIRTABLE_CONFIG.get("CLIENTS_TABLE_NAME")
 
 # --- Inicjalizacja Airtable API ---
 airtable_api = None
-clients_table = None # Ważne, aby zdefiniować globalnie
 if all([AIRTABLE_API_KEY, AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME]):
     try:
         airtable_api = Api(AIRTABLE_API_KEY)
@@ -86,7 +85,7 @@ except Exception as e:
 
 
 # =====================================================================
-# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI (ZAKTUALIZOWANA) ===============
+# === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI (bez zmian) ===================
 # =====================================================================
 SYSTEM_INSTRUCTION_GENERAL = """
 ### O Tobie (Twoja Rola)
@@ -156,9 +155,9 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
         logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
         first_name, last_name = get_user_profile(psid, page_access_token)
         
-        # === POPRAWKA JEST TUTAJ: Usunięto pole "Źródło" ===
         new_client_data = {
-            "ClientID": psid
+            "ClientID": psid,
+            "Źródło": "Messenger Bot"
         }
         if first_name:
             new_client_data["Imię"] = first_name
