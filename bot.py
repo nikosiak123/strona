@@ -80,6 +80,39 @@ SAFETY_SETTINGS = [
     SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
 ]
 
+EXPECTING_REPLY = "EXPECTING_REPLY"
+CONVERSATION_ENDED = "CONVERSATION_ENDED"
+FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
+
+
+# === NOWA INSTRUKCJA SYSTEMOWA DLA ANALITYKA AI ===
+SYSTEM_INSTRUCTION_ANALYSIS = f"""
+Twoim zadaniem jest analiza stanu konwersacji między asystentem (botem) a użytkownikiem. Na podstawie historii czatu i ostatniej wiadomości bota, musisz określić, czy bot powinien spodziewać się odpowiedzi.
+
+Twoja odpowiedź MUSI być TYLKO I WYŁĄCZNIE jednym z trzech poniższych statusów:
+
+1.  `{EXPECTING_REPLY}`
+    - Użyj, gdy bot zadał bezpośrednie pytanie lub gdy rozmowa jest wyraźnie w toku i oczekiwana jest kontynuacja od użytkownika.
+    - Przykład:
+      Klient: 8 klasa podstawówki
+      Bot: Super! Lekcja kosztuje 65 zł. Czy chcieliby Państwo umówić lekcję testową?
+
+2.  `{CONVERSATION_ENDED}`
+    - Użyj, gdy użytkownik jednoznacznie zakończył rozmowę, odrzucił ofertę, a bot grzecznie się pożegnał. Dalsze przypominanie byłoby nachalne.
+    - Przykład:
+      Klient: online to nie chcę
+      Bot: Rozumiem. Gdyby zmienili Państwo zdanie, zapraszam do kontaktu.
+
+3.  `{FOLLOW_UP_LATER}`
+    - Użyj, gdy użytkownik zadeklarował, że odezwie się później (np. "porozmawiam z mężem", "dam znać wieczorem"). Bot nie powinien wysyłać automatycznego przypomnienia, bo wie, że ma czekać.
+    - Przykład:
+      Klient: dobrze porozmawiam z córką dziś wieczorem
+      Bot: Oczywiście, w takim razie czekam na wiadomość.
+
+Przeanalizuj poniższą historię i ostatnią wiadomość bota, a następnie zwróć JEDEN z trzech statusów.
+"""
+
+
 # =====================================================================
 # === INICJALIZACJA AI ================================================
 # =====================================================================
@@ -328,31 +361,101 @@ def get_gemini_response(history, prompt_details):
         logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
         return "Przepraszam, wystąpił nieoczekiwany błąd."
 
+def get_conversation_status(history, bot_reply):
+    """Używa AI do analizy i zwraca status konwersacji."""
+    if not gemini_model:
+        logging.warning("Analityk AI niedostępny, domyślnie włączam przypomnienia.")
+        return EXPECTING_REPLY
+
+    # Formatujemy historię dla analityka
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
+    
+    prompt_for_analysis = (
+        f"OTO HISTORIA CZATU:\n---\n{chat_history_text}\n---\n\n"
+        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{bot_reply}\n---"
+    )
+
+    # Używamy tej samej biblioteki, co dla rozmowy
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_ANALYSIS)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status.")]),
+        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
+    ]
+    
+    try:
+        # Używamy "zimniejszej" konfiguracji, aby odpowiedź była bardziej przewidywalna
+        analysis_config = GenerationConfig(temperature=0.1)
+        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        status = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        
+        # Sprawdź, czy odpowiedź jest jedną z oczekiwanych
+        if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]:
+            return status
+        else:
+            logging.warning(f"Analityk AI zwrócił nieoczekiwany status: '{status}'. Domyślnie włączam przypomnienia.")
+            return EXPECTING_REPLY # Bezpieczne domyślne zachowanie
+
+    except Exception as e:
+        logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
+        return EXPECTING_REPLY # Bezpieczne domyślne zachowanie w razie błędu
+
 # =====================================================================
 # === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
 # =====================================================================
 def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
-        if not PAGE_CONFIG: return
+        if not PAGE_CONFIG:
+            logging.error("Brak konfiguracji PAGE_CONFIG. Wątek kończy pracę.")
+            return
+            
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
-        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
+
+        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
+            return
+        
         if event_payload.get("read"):
             handle_read_receipt(sender_id, recipient_id, NUDGE_TASKS_FILE)
             return
+            
         page_config = PAGE_CONFIG.get(recipient_id)
-        if not page_config: return
+        if not page_config:
+            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGurowanej strony: {recipient_id}")
+            return
+            
         page_token = page_config.get("token")
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text: return
+        if not user_message_text:
+            return
+        
         cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+        
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
+
+        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
+        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
+
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
+
+        logging.info("Wysyłam zapytanie do AI Gemini (rozmowa)...")
         ai_response_raw = get_gemini_response(history, prompt_details)
+        logging.info(f"AI (rozmowa) odpowiedziało: '{ai_response_raw[:100]}...'")
+        
+        # Zaktualizuj historię o odpowiedź bota PRZED analizą
+        history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
+        
+        # --- NOWA LOGIKA ANALIZY KONWERSACJI ---
+        logging.info("Wysyłam zapytanie do AI Gemini (analiza statusu)...")
+        # Przekazujemy pełną, zaktualizowaną historię do analizy
+        conversation_status = get_conversation_status(history)
+        logging.info(f"AI (analiza) zwróciło status: {conversation_status}")
+        # --- KONIEC NOWEJ LOGIKI ---
+        
         final_message_to_user = ""
+        
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
@@ -362,11 +465,19 @@ def process_event(event_payload):
                 final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
         else:
             final_message_to_user = ai_response_raw
+            
         send_message(sender_id, final_message_to_user, page_token)
-        history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
-        if AGREEMENT_MARKER not in final_message_to_user:
+        
+        # --- ZMODYFIKOWANA LOGIKA PLANOWANIA PRZYPOMNIEŃ ---
+        if conversation_status == EXPECTING_REPLY:
+            logging.info("Status to EXPECTING_REPLY. Planuję przypomnienie.")
             schedule_nudge(sender_id, recipient_id, UNREAD_FINAL_NUDGE_DELAY_HOURS, "pending_initial_unread", NUDGE_TASKS_FILE)
-        save_history(sender_id, history)
+        else:
+            logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
+        # --- KONIEC ZMODYFIKOWANEJ LOGIKI ---
+        
+        save_history(sender_id, history) # Zapisujemy historię, która zawiera już odpowiedź bota
+
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
