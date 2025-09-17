@@ -491,7 +491,7 @@ if __name__ == '__main__':
     # --- DODANO URUCHOMIENIE HARMONOGRAMU ---
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
     # Uruchom sprawdzanie co 5 minut
-    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=5)
+    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=10)
     scheduler.start()
     # Zarejestruj zamknięcie harmonogramu przy wyjściu
     atexit.register(lambda: scheduler.shutdown())
