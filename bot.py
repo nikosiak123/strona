@@ -8,6 +8,11 @@ import json
 import requests
 import time
 import vertexai
+import pytz
+import atexit
+import uuid
+from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
 from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
     SafetySetting, HarmCategory, HarmBlockThreshold
@@ -31,6 +36,14 @@ try:
 except (FileNotFoundError, json.JSONDecodeError) as e:
     print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
     exit()
+
+NUDGE_TASKS_FILE = "nudge_tasks.json"
+READ_DELAY_HOURS = 6
+UNREAD_DELAY_HOURS = 18
+TIMEZONE = "Europe/Warsaw"
+NUDGE_WINDOW_START = 6  # Godzina 6:00
+NUDGE_WINDOW_END = 23   # Godzina 23:59 (w praktyce do północy)
+NUDGE_EMOJI = "👍"
 
 AI_CONFIG = config.get("AI_CONFIG", {})
 AIRTABLE_CONFIG = config.get("AIRTABLE_CONFIG", {})
@@ -64,6 +77,67 @@ SAFETY_SETTINGS = [
     SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH),
     SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
 ]
+
+# =====================================================================
+# === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
+# =====================================================================
+
+def load_nudge_tasks():
+    """Wczytuje zadania przypomnień z pliku JSON."""
+    if not os.path.exists(NUDGE_TASKS_FILE):
+        return {}
+    try:
+        with open(NUDGE_TASKS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+
+def save_nudge_tasks(tasks):
+    """Zapisuje zadania przypomnień do pliku JSON."""
+    try:
+        with open(NUDGE_TASKS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(tasks, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"Błąd zapisu zadań przypomnień: {e}")
+
+def cancel_nudge(psid):
+    """Anuluje wszystkie aktywne przypomnienia dla danego użytkownika."""
+    tasks = load_nudge_tasks()
+    task_to_remove = None
+    for task_id, task_data in tasks.items():
+        if task_data.get("psid") == psid and task_data.get("status") == "pending":
+            task_to_remove = task_id
+            break
+    if task_to_remove:
+        del tasks[task_to_remove]
+        save_nudge_tasks(tasks)
+        logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
+
+def schedule_nudge(psid, page_id, delay_hours):
+    """Planuje nowe zadanie przypomnienia, anulując poprzednie."""
+    cancel_nudge(psid) # Zawsze anuluj stare zadanie przed dodaniem nowego
+    
+    tasks = load_nudge_tasks()
+    task_id = str(uuid.uuid4())
+    now = datetime.now(pytz.timezone(TIMEZONE))
+    nudge_time = now + timedelta(hours=delay_hours)
+    
+    tasks[task_id] = {
+        "psid": psid,
+        "page_id": page_id,
+        "nudge_time_iso": nudge_time.isoformat(),
+        "delay_hours": delay_hours,
+        "status": "pending"
+    }
+    save_nudge_tasks(tasks)
+    logging.info(f"Zaplanowano przypomnienie dla PSID {psid} za {delay_hours}h.")
+
+def handle_read_receipt(psid, page_id):
+    """Obsługuje zdarzenie odczytania wiadomości przez użytkownika."""
+    logging.info(f"Użytkownik {psid} odczytał wiadomość. Zmieniam harmonogram przypomnienia.")
+    # Anuluj stare przypomnienie "nieprzeczytane" (18h) i ustaw nowe "przeczytane" (6h)
+    schedule_nudge(psid, page_id, READ_DELAY_HOURS)
+
 
 # =====================================================================
 # === INICJALIZACJA AI (Wersja dla Vertex AI) ==========================
@@ -125,6 +199,50 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === NOWE FUNKCJE POMOCNICZE (Airtable i Profil FB) ===================
 # =====================================================================
+
+def check_and_send_nudges():
+    """Główna funkcja harmonogramu. Sprawdza i wysyła zaległe przypomnienia."""
+    logging.info("[Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    tasks = load_nudge_tasks()
+    config = config # Użyj globalnej, wczytanej na starcie konfiguracji
+    if not config: return
+
+    now = datetime.now(pytz.timezone(TIMEZONE))
+    tasks_modified = False
+    
+    for task_id, task in list(tasks.items()):
+        if task.get("status") != "pending":
+            continue
+
+        nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
+        
+        if now >= nudge_time:
+            # Nadszedł czas na wysyłkę, ale sprawdźmy okno czasowe
+            is_in_window = NUDGE_WINDOW_START <= now.hour <= NUDGE_WINDOW_END
+            
+            if is_in_window:
+                logging.info(f"Wysyłam przypomnienie do PSID {task['psid']}...")
+                page_config = config.get("PAGE_CONFIG", {}).get(task["page_id"])
+                if page_config and page_config.get("token"):
+                    send_message(task["psid"], NUDGE_EMOJI, page_config["token"])
+                    task["status"] = "sent"
+                    tasks_modified = True
+                else:
+                    logging.error(f"Brak tokena dla page_id {task['page_id']}. Nie można wysłać przypomnienia.")
+                    task["status"] = "failed"
+                    tasks_modified = True
+            else:
+                # Jest zła godzina, przeplanuj na następne okno
+                logging.info(f"Zła pora na wysyłkę do {task['psid']}. Przeplanowuję...")
+                next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=0, second=0)
+                if now.hour >= NUDGE_WINDOW_END:
+                    next_day_start += timedelta(days=1)
+                
+                task["nudge_time_iso"] = next_day_start.isoformat()
+                tasks_modified = True
+
+    if tasks_modified:
+        save_nudge_tasks(tasks)
 
 def get_user_profile(psid, page_access_token):
     """Pobiera imię i nazwisko użytkownika z Facebook Graph API."""
@@ -259,6 +377,12 @@ def process_event(event_payload):
 
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
             return
+        
+        # --- ZMIANA 1: Obsługa zdarzenia odczytania ---
+        if event_payload.get("read"):
+            handle_read_receipt(sender_id, recipient_id)
+            return
+        # --- KONIEC ZMIANY ---
 
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
@@ -271,6 +395,10 @@ def process_event(event_payload):
 
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text: return
+        
+        # --- ZMIANA 2: Anuluj przypomnienie, bo użytkownik odpowiedział ---
+        cancel_nudge(sender_id)
+        # --- KONIEC ZMIANY ---
 
         logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
         logging.info(f"Odebrano wiadomość: '{user_message_text}'")
@@ -282,29 +410,31 @@ def process_event(event_payload):
         ai_response_raw = get_gemini_response(history, prompt_details)
         logging.info(f"AI odpowiedziało: '{ai_response_raw[:100]}...'")
         
+        final_message_to_user = ""
+        
         if AGREEMENT_MARKER in ai_response_raw:
-            logging.info(">>> ZNALEZIONO ZNACZNIK ZGODY! Rozpoczynam proces tworzenia klienta. <<<")
-            
-            # POPRAWKA: Przekazujemy obiekt `clients_table` do funkcji
+            logging.info(">>> ZNALEZIONO ZNACZNIK ZGODY! <<<")
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             
             if client_id:
                 reservation_link = f"https://zakręcone-korepetycje.pl/?clientID={client_id}"
                 final_message_to_user = (
-                    f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji pierwszej lekcji testowej.\n\n"
+                    f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n"
                     f"{reservation_link}\n\n"
-                    f"Proszę go nie udostępniać nikomu, ponieważ jest on przypisany bezpośrednio do Państwa. "
-                    f"Zapraszam do wybrania dogodnego terminu!"
+                    f"Proszę go nie udostępniać nikomu. Zapraszam do wybrania terminu!"
                 )
-                send_message(sender_id, final_message_to_user, page_token)
-                history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
             else:
-                error_message = "Wygląda na to, że wystąpił błąd z naszym systemem rezerwacji. Proszę spróbować ponownie za chwilę lub skontaktować się z nami bezpośrednio."
-                send_message(sender_id, error_message, page_token)
-                history.append(Content(role="model", parts=[Part.from_text(error_message)]))
+                final_message_to_user = "Wygląda na to, że wystąpił błąd z naszym systemem rezerwacji. Proszę spróbować ponownie za chwilę."
         else:
-            send_message(sender_id, ai_response_raw, page_token)
-            history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
+            final_message_to_user = ai_response_raw
+
+        send_message(sender_id, final_message_to_user, page_token)
+        history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
+        
+        # --- ZMIANA 3: Zaplanuj przypomnienie po wysłaniu wiadomości ---
+        if AGREEMENT_MARKER not in final_message_to_user: # Nie planuj przypomnienia, jeśli wysłaliśmy link
+            schedule_nudge(sender_id, recipient_id, UNREAD_DELAY_HOURS)
+        # --- KONIEC ZMIANY ---
 
         save_history(sender_id, history)
         logging.info(f"--- Zakończono przetwarzanie dla {sender_id} ---")
@@ -335,8 +465,22 @@ def webhook_handle():
         return Response("NOT_PAGE_EVENT", status=404)
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
     ensure_dir(HISTORY_DIR)
+    
+    # --- DODANO URUCHOMIENIE HARMONOGRAMU ---
+    scheduler = BackgroundScheduler(timezone=TIMEZONE)
+    # Uruchom sprawdzanie co 5 minut
+    scheduler.add_job(func=check_and_send_nudges, trigger="interval", minutes=5)
+    scheduler.start()
+    # Zarejestruj zamknięcie harmonogramu przy wyjściu
+    atexit.register(lambda: scheduler.shutdown())
+    # --- KONIEC DODAWANIA ---
+    
     port = int(os.environ.get("PORT", 8080))
     logging.info(f"Uruchamianie serwera na porcie {port}...")
     try:
