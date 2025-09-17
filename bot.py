@@ -252,8 +252,9 @@ def save_history(user_psid, history):
         logging.error(f"BŁĄD zapisu historii dla {user_psid}: {e}")
 
 # =====================================================================
-# === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
+# === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) - POPRAWIONE =========
 # =====================================================================
+
 def load_nudge_tasks(tasks_file):
     if not os.path.exists(tasks_file): return {}
     try:
@@ -266,7 +267,7 @@ def save_nudge_tasks(tasks, tasks_file):
         with open(tasks_file, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2)
     except Exception as e:
-        logging.error(f"Błąd zapisu zadań przypomnień: {e}")
+        logging.error(f"Błąd zapisu zadań przypomniech: {e}")
 
 def cancel_nudge(psid, tasks_file):
     tasks = load_nudge_tasks(tasks_file)
@@ -276,22 +277,22 @@ def cancel_nudge(psid, tasks_file):
         save_nudge_tasks(tasks, tasks_file)
         logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
 
-def schedule_nudge(psid, page_id, status, nudge_time_iso=None, nudge_message=None):
-    cancel_nudge(psid) # Zawsze anuluj stare zadanie
-    tasks = load_nudge_tasks()
+def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None):
+    cancel_nudge(psid, tasks_file)
+    tasks = load_nudge_tasks(tasks_file)
     task_id = str(uuid.uuid4())
     
     task_data = {"psid": psid, "page_id": page_id, "status": status}
 
     if nudge_time_iso:
         task_data["nudge_time_iso"] = nudge_time_iso
-    # Dodajemy nowe pola
     if nudge_message:
         task_data["nudge_message"] = nudge_message
     
     tasks[task_id] = task_data
-    save_nudge_tasks(tasks)
+    save_nudge_tasks(tasks, tasks_file)
     logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid}.")
+
 
 
 def handle_read_receipt(psid, page_id, tasks_file):
@@ -454,59 +455,38 @@ def get_conversation_status(history):
 def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
-        if not PAGE_CONFIG:
-            logging.error("Brak konfiguracji PAGE_CONFIG. Wątek kończy pracę.")
-            return
+        if not PAGE_CONFIG: return
             
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
-
-        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
-            return
+        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
         
-        # Anuluj istniejące przypomnienia, jeśli użytkownik odczytał lub napisał
-        if event_payload.get("read") or event_payload.get("message"):
-             cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-
-        # Jeśli to tylko zdarzenie odczytania, zakończ
         if event_payload.get("read"):
-            logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
-            return
-            
+             #handle_read_receipt(sender_id, recipient_id, NUDGE_TASKS_FILE)
+             # Na razie wyłączamy, bo nie mamy starego systemu
+             pass
+        
         page_config = PAGE_CONFIG.get(recipient_id)
-        if not page_config:
-            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGurowanej strony: {recipient_id}")
-            return
+        if not page_config: return
             
         page_token = page_config.get("token")
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text:
-            return
+        if not user_message_text: return
+        
+        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
-
-        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
-        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
-
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
 
-        logging.info("Wysyłam zapytanie do AI Gemini (rozmowa)...")
         ai_response_raw = get_gemini_response(history, prompt_details)
-        logging.info(f"AI (rozmowa) odpowiedziało: '{ai_response_raw[:100]}...'")
-        
-        # Zaktualizuj historię o odpowiedź bota PRZED analizą
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
-        # --- NOWA LOGIKA ANALIZY KONWERSACJI ---
-        logging.info("Wysyłam zapytanie do AI Gemini (analiza statusu)...")
         conversation_status, follow_up_time_iso = get_conversation_status(history)
         logging.info(f"AI (analiza) zwróciło status: {conversation_status}, Czas: {follow_up_time_iso}")
-        # --- KONIEC NOWEJ LOGIKI ---
         
         final_message_to_user = ""
-        
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
@@ -519,30 +499,19 @@ def process_event(event_payload):
             
         send_message(sender_id, final_message_to_user, page_token)
         
-        # --- ZMODYFIKOWANA LOGIKA PLANOWANIA PRZYPOMNIEŃ ---
         if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
-            logging.info("Status to FOLLOW_UP_LATER. Generuję spersonalizowane przypomnienie...")
-            
-            # Poproś AI o stworzenie wiadomości przypominającej
             follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
-            logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
-            
-            # Zaplanuj wysłanie tej wiadomości o określonej godzinie
             schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
+                           tasks_file=NUDGE_TASKS_FILE,
                            nudge_time_iso=follow_up_time_iso, 
-                           nudge_message=follow_up_message,
-                           tasks_file=NUDGE_TASKS_FILE)
-        
+                           nudge_message=follow_up_message)
         elif conversation_status == EXPECTING_REPLY:
-            # Ta sekcja jest teraz pusta, bo nie używamy już starego systemu z kciukami.
-            # W przyszłości można tu przywrócić prostszy mechanizm.
-            logging.info("Status to EXPECTING_REPLY. (Obecnie brak akcji przypominającej)")
+            logging.info("Status to EXPECTING_REPLY. (Brak akcji przypominającej)")
             pass
         else:
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
-        # --- KONIEC ZMODYFIKOWANEJ LOGIKI ---
         
-        save_history(sender_id, history) # Zapisujemy historię, która zawiera już odpowiedź bota
+        save_history(sender_id, history)
 
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
