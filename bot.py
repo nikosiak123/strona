@@ -204,10 +204,17 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 def check_and_send_nudges():
     """Główna funkcja harmonogramu. Sprawdza i wysyła zaległe przypomnienia."""
     logging.info("[Scheduler] Uruchamiam sprawdzanie przypomnień...")
-    tasks = load_nudge_tasks()
-    config = config # Użyj globalnej, wczytanej na starcie konfiguracji
-    if not config: return
+    
+    # === KLUCZOWA POPRAWKA JEST TUTAJ ===
+    # Zawsze wczytuj konfigurację na początku, aby mieć pewność, że mamy dostęp do tokenów.
+    # Używamy zmiennej `page_config_from_file`, aby uniknąć konfliktu nazw.
+    page_config_from_file = load_config().get("PAGE_CONFIG", {})
+    if not page_config_from_file:
+        logging.error("[Scheduler] Nie udało się wczytać konfiguracji stron. Pomijam sprawdzanie.")
+        return
+    # === KONIEC POPRAWKI ===
 
+    tasks = load_nudge_tasks()
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_modified = False
     
@@ -218,23 +225,22 @@ def check_and_send_nudges():
         nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
         
         if now >= nudge_time:
-            # Nadszedł czas na wysyłkę, ale sprawdźmy okno czasowe
             is_in_window = NUDGE_WINDOW_START <= now.hour <= NUDGE_WINDOW_END
             
             if is_in_window:
-                logging.info(f"Wysyłam przypomnienie do PSID {task['psid']}...")
-                page_config = config.get("PAGE_CONFIG", {}).get(task["page_id"])
+                logging.info(f"[Scheduler] Wysyłam przypomnienie do PSID {task['psid']}...")
+                page_config = page_config_from_file.get(task["page_id"]) # Używamy wczytanej konfiguracji
+                
                 if page_config and page_config.get("token"):
                     send_message(task["psid"], NUDGE_EMOJI, page_config["token"])
                     task["status"] = "sent"
                     tasks_modified = True
                 else:
-                    logging.error(f"Brak tokena dla page_id {task['page_id']}. Nie można wysłać przypomnienia.")
+                    logging.error(f"[Scheduler] Brak tokena dla page_id {task['page_id']}. Nie można wysłać.")
                     task["status"] = "failed"
                     tasks_modified = True
             else:
-                # Jest zła godzina, przeplanuj na następne okno
-                logging.info(f"Zła pora na wysyłkę do {task['psid']}. Przeplanowuję...")
+                logging.info(f"[Scheduler] Zła pora na wysyłkę do {task['psid']}. Przeplanowuję.")
                 next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=0, second=0)
                 if now.hour >= NUDGE_WINDOW_END:
                     next_day_start += timedelta(days=1)
