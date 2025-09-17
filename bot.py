@@ -63,10 +63,10 @@ else:
 
 # === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ (WARTOŚCI TESTOWE) ===
 NUDGE_TASKS_FILE = "nudge_tasks.json"
-UNREAD_FINAL_NUDGE_DELAY_HOURS = 0.015 # ok. 1 minuty
-READ_THUMB_NUDGE_DELAY_HOURS = 0.01 # ok. 40 sekund
-UNREAD_THUMB_FINAL_NUDGE_DELAY_HOURS = 0.02 # ok. 1.2 minuty
-READ_THUMB_FINAL_NUDGE_DELAY_HOURS = 0.01 # ok. 40 sekund
+UNREAD_FINAL_NUDGE_DELAY_HOURS = 18
+READ_THUMB_NUDGE_DELAY_HOURS = 6
+UNREAD_THUMB_FINAL_NUDGE_DELAY_HOURS = 12
+READ_THUMB_FINAL_NUDGE_DELAY_HOURS = 6
 TIMEZONE = "Europe/Warsaw"
 NUDGE_WINDOW_START, NUDGE_WINDOW_END = 6, 23
 NUDGE_EMOJI = "👍"
@@ -256,7 +256,7 @@ def handle_read_receipt(psid, page_id, tasks_file):
         schedule_nudge(psid, page_id, READ_THUMB_FINAL_NUDGE_DELAY_HOURS, "pending_final_nudge", tasks_file)
 
 def check_and_send_nudges():
-    logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    #logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
@@ -397,7 +397,7 @@ if __name__ == '__main__':
     ensure_dir(HISTORY_DIR)
     
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
-    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=20) # Sprawdzaj co 20 sekund
+    scheduler.add_job(func=check_and_send_nudges, trigger="interval", minutes=5) # Sprawdzaj co 20 sekund
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
     
