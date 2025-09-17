@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: FINALNA (AI + Airtable + Zaawansowane Przypomnienia - Wersja Testowa)
+# Wersja: OSTATECZNA (AI + Airtable + Zaawansowane Przypomnienia - Poprawka NameError)
 
 from flask import Flask, request, Response
 import threading
@@ -136,13 +136,17 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
+
+# --- KLUCZOWA POPRAWKA: Przywracamy tę funkcję ---
 def load_config():
+    """Wczytuje pełną konfigurację z pliku JSON."""
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    except Exception as e:
+    except (FileNotFoundError, json.JSONDecodeError) as e:
         logging.critical(f"KRYTYCZNY BŁĄD wczytywania config.json: {e}")
         return {}
+# --- KONIEC POPRAWKI ---
 
 def get_user_profile(psid, page_access_token):
     try:
