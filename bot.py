@@ -361,7 +361,7 @@ def get_gemini_response(history, prompt_details):
         logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
         return "Przepraszam, wystąpił nieoczekiwany błąd."
 
-def get_conversation_status(history, bot_reply):
+def get_conversation_status(history):
     """Używa AI do analizy i zwraca status konwersacji."""
     if not gemini_model:
         logging.warning("Analityk AI niedostępny, domyślnie włączam przypomnienia.")
@@ -370,12 +370,20 @@ def get_conversation_status(history, bot_reply):
     # Formatujemy historię dla analityka
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     
+    # Usuwamy ostatnią wiadomość bota z historii, aby przedstawić ją jako "ostatnia wiadomość"
+    # To daje lepszy kontekst analitykowi
+    if history and history[-1].role == 'model':
+        chat_history_text_without_last = "\n".join(chat_history_text.splitlines()[:-1])
+        last_bot_reply = history[-1].parts[0].text
+    else:
+        chat_history_text_without_last = chat_history_text
+        last_bot_reply = "[Brak ostatniej odpowiedzi bota]"
+
     prompt_for_analysis = (
-        f"OTO HISTORIA CZATU:\n---\n{chat_history_text}\n---\n\n"
-        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{bot_reply}\n---"
+        f"OTO HISTORIA CZATU (bez ostatniej odpowiedzi bota):\n---\n{chat_history_text_without_last}\n---\n\n"
+        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{last_bot_reply}\n---"
     )
 
-    # Używamy tej samej biblioteki, co dla rozmowy
     full_prompt = [
         Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_ANALYSIS)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status.")]),
@@ -383,21 +391,24 @@ def get_conversation_status(history, bot_reply):
     ]
     
     try:
-        # Używamy "zimniejszej" konfiguracji, aby odpowiedź była bardziej przewidywalna
         analysis_config = GenerationConfig(temperature=0.1)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        
+        if not response.candidates:
+            logging.warning("Analityk AI nie wygenerował odpowiedzi. Domyślnie włączam przypomnienia.")
+            return EXPECTING_REPLY
+
         status = "".join(part.text for part in response.candidates[0].content.parts).strip()
         
-        # Sprawdź, czy odpowiedź jest jedną z oczekiwanych
         if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]:
             return status
         else:
             logging.warning(f"Analityk AI zwrócił nieoczekiwany status: '{status}'. Domyślnie włączam przypomnienia.")
-            return EXPECTING_REPLY # Bezpieczne domyślne zachowanie
+            return EXPECTING_REPLY
 
     except Exception as e:
         logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
-        return EXPECTING_REPLY # Bezpieczne domyślne zachowanie w razie błędu
+        return EXPECTING_REPLY
 
 # =====================================================================
 # === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
