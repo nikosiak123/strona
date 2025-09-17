@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # Wersja: OSTATECZNA (AI + Airtable + Zaawansowane Przypomnienia - Poprawka NameError)
 import uuid
-import ntplib # <-- DODAJ TO
-from time import ctime # <-- DODAJ TO
+import ntp_time # <-- NOWA BIBLIOTEKA
+
 from flask import Flask, request, Response
 import threading
 import os
@@ -186,17 +186,20 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 def get_ntp_time(timezone_str):
     """Pobiera aktualny, precyzyjny czas z serwera NTP i konwertuje do podanej strefy czasowej."""
     try:
-        # Utwórz klienta NTP
-        client = ntplib.NTPClient()
-        # Zapytaj standardowy serwer NTP
-        response = client.request('pool.ntp.org', version=3)
-        # Pobierz czas UTC
-        utc_time = datetime.fromtimestamp(response.tx_ts, tz=pytz.utc)
-        # Skonwertuj do naszej strefy czasowej
+        # Nowa biblioteka robi to wszystko w jednej, prostej linii!
+        # Pobiera czas jako timestamp UTC.
+        utc_timestamp = ntp_time.time()
+        
+        # Konwertujemy timestamp na obiekt datetime z informacją o strefie UTC
+        utc_time = datetime.fromtimestamp(utc_timestamp, tz=pytz.utc)
+        
+        # Konwertujemy do naszej lokalnej strefy czasowej
         local_tz = pytz.timezone(timezone_str)
         local_time = utc_time.astimezone(local_tz)
+        
         logging.info(f"Pobrano precyzyjny czas NTP: {local_time.isoformat()}")
         return local_time
+        
     except Exception as e:
         logging.warning(f"Nie udało się pobrać czasu NTP: {e}. Używam czasu systemowego jako fallback.")
         # W razie błędu, wracamy do starej, mniej pewnej metody
