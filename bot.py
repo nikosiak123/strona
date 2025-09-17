@@ -201,6 +201,15 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # === NOWE FUNKCJE POMOCNICZE (Airtable i Profil FB) ===================
 # =====================================================================
 
+def load_config():
+    """Wczytuje pełną konfigurację z pliku JSON."""
+    try:
+        with open('config.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logging.critical(f"KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
+        return {} # Zwróć pusty słownik w razie błędu
+
 def check_and_send_nudges():
     """Główna funkcja harmonogramu. Sprawdza i wysyła zaległe przypomnienia."""
     logging.info("[Scheduler] Uruchamiam sprawdzanie przypomnień...")
