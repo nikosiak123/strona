@@ -92,36 +92,33 @@ SYSTEM_INSTRUCTION_ANALYSIS = f"""
 Twoim zadaniem jest analiza stanu konwersacji i określenie, czy bot powinien spodziewać się odpowiedzi.
 
 ### Krok 1: Analiza Czasu
-- Aktualna data i godzina to: `{{current_time}}`.
-- Pamiętaj, że bot może wysyłać wiadomości tylko w ciągu 24 godzin od ostatniej wiadomości klienta.
+- **Aktualna data i godzina to: `{{current_time}}`.** Traktuj tę datę jako absolutnie poprawną, nawet jeśli jest w przyszłości.
 
 ### Krok 2: Analiza Intencji Klienta
 Na podstawie historii czatu i ostatniej wiadomości bota, wybierz JEDEN z trzech poniższych statusów:
 
 1.  `{EXPECTING_REPLY}`
     - Użyj, gdy bot zadał bezpośrednie pytanie lub gdy rozmowa jest w toku.
-    - Zwróć TYLKO ten status. Przykład:
-      `{EXPECTING_REPLY}`
+    - Zwróć TYLKO ten status.
 
 2.  `{CONVERSATION_ENDED}`
     - Użyj, gdy użytkownik jednoznacznie zakończył rozmowę.
-    - Zwróć TYLKO ten status. Przykład:
-      `{CONVERSATION_ENDED}`
+    - Zwróć TYLKO ten status.
 
 3.  `{FOLLOW_UP_LATER}`
-    - Użyj, gdy użytkownik zadeklarował, że odezwie się później (np. "porozmawiam z mężem", "dam znać wieczorem", "jak syn wróci ze szkoły").
-    - **Twoim zadaniem jest oszacowanie, kiedy to będzie i zwrócenie DATY i GODZINY w formacie ISO 8601.**
-    - Bądź konserwatywny, dodaj trochę buforu czasowego.
-    - **WAŻNE:** Jeśli szacowany czas jest DALSZY niż 23 godziny od teraz, zwróć `{CONVERSATION_ENDED}`.
+    - Użyj, gdy użytkownik zadeklarował, że odezwie się później (np. "dam znać wieczorem", "jak syn wróci ze szkoły").
+    - **TWOJE ZADANIE:** Na podstawie `{{current_time}}` i deklaracji klienta, precyzyjnie oszacuj przyszłą datę i godzinę przypomnienia.
+    - **REGUŁY, KTÓRYCH MUSISZ PRZESTRZEGAĆ:**
+        - **ZACHOWAJ ROK:** Zawsze używaj tego samego roku, który jest w `{{current_time}}`.
+        - **BĄDŹ LOGICZNY:** Szacowany czas musi być w przyszłości względem `{{current_time}}`.
+        - **NIE PRZEKRACZAJ 23 GODZIN:** Jeśli szacowany czas jest dalszy niż 23 godziny od `{{current_time}}`, zwróć `{CONVERSATION_ENDED}`.
     - Twoja odpowiedź MUSI mieć format: `{FOLLOW_UP_LATER}|YYYY-MM-DDTHH:MM:SS`
-    - Przykład 1: Klient pisze "napiszę wieczorem", jest godzina 14:00. Wieczór to ok. 19:00, dodajesz bufor -> 20:30. Zwracasz:
-      `{FOLLOW_UP_LATER}|2025-09-18T20:30:00`
-    - Przykład 2: Klient pisze "jak syn wróci ze szkoły", jest godzina 12:00. Szkoła kończy się ok. 15:00-16:00, dodajesz bufor -> 18:00. Zwracasz:
-      `{FOLLOW_UP_LATER}|2025-09-18T18:00:00`
-    - Przykład 3: Klient pisze "odezwę się za 2 dni". To jest > 23h. Zwracasz:
-      `{CONVERSATION_ENDED}`
+    - Przykład (zakładając, że `{{current_time}}` to `2025-09-17T14:00:00`):
+      - Klient: "napiszę wieczorem" -> Oszacowanie: 20:30 tego samego dnia. Zwracasz: `{FOLLOW_UP_LATER}|2025-09-17T20:30:00`
+      - Klient: "odezwę się jutro rano" -> Oszacowanie: 9:00 następnego dnia. Zwracasz: `{FOLLOW_UP_LATER}|2025-09-18T09:00:00`
+      - Klient: "odezwę się za 2 dni" -> To jest > 23h. Zwracasz: `{CONVERSATION_ENDED}`
 
-Przeanalizuj poniższą historię i ostatnią wiadomość bota, a następnie zwróć odpowiedź w wymaganym formacie.
+Przeanalizuj poniższą historię i zwróć odpowiedź w wymaganym formacie.
 """
 
 
