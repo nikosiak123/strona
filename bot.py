@@ -183,26 +183,34 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
-def get_ntp_time(timezone_str):
-    """Pobiera aktualny, precyzyjny czas z serwera NTP i konwertuje do podanej strefy czasowej."""
+def get_world_time(timezone_str):
+    """Pobiera aktualny, precyzyjny czas z WorldTimeAPI."""
     try:
-        # === OSTATECZNA POPRAWKA SKŁADNI JEST TUTAJ ===
-        # Prawidłowe wywołanie to ntp_time.request(), a nie ntp_time.time()
-        utc_timestamp = ntp_time.request('pool.ntp.org', version=3)
-        # === KONIEC POPRAWKI ===
+        # Pytamy API o aktualny czas dla naszej strefy
+        api_url = f"http://worldtimeapi.org/api/timezone/{timezone_str}"
+        response = requests.get(api_url, timeout=5)
+        response.raise_for_status()
         
-        # Konwertujemy timestamp na obiekt datetime z informacją o strefie UTC
-        utc_time = datetime.fromtimestamp(utc_timestamp, tz=pytz.utc)
+        # Parsujemy odpowiedź JSON
+        data = response.json()
         
-        # Konwertujemy do naszej lokalnej strefy czasowej
+        # Pobieramy pełną datę i godzinę w formacie ISO 8601
+        datetime_iso_str = data['datetime']
+        
+        # Konwertujemy tekst na obiekt datetime
+        # Przykład: '2024-05-16T15:30:00.123456+02:00'
+        # [:-6] usuwa informację o strefie czasowej, bo dodamy ją sami z pytz
+        precise_time = datetime.fromisoformat(datetime_iso_str[:-6])
+        
+        # Dodajemy informację o strefie czasowej
         local_tz = pytz.timezone(timezone_str)
-        local_time = utc_time.astimezone(local_tz)
-        
-        logging.info(f"Pobrano precyzyjny czas NTP: {local_time.isoformat()}")
-        return local_time
+        precise_time_with_tz = local_tz.localize(precise_time)
+
+        logging.info(f"Pobrano precyzyjny czas z WorldTimeAPI: {precise_time_with_tz.isoformat()}")
+        return precise_time_with_tz
         
     except Exception as e:
-        logging.warning(f"Nie udało się pobrać czasu NTP: {e}. Używam czasu systemowego jako fallback.")
+        logging.warning(f"Nie udało się pobrać czasu z WorldTimeAPI: {e}. Używam czasu systemowego jako fallback.")
         # W razie błędu, wracamy do starej, mniej pewnej metody
         return datetime.now(pytz.timezone(timezone_str))
 
@@ -430,7 +438,7 @@ def get_conversation_status(history):
 
     # === KLUCZOWA ZMIANA JEST TUTAJ ===
     # Pobieramy precyzyjny czas, a nie systemowy
-    current_precise_time = get_ntp_time(TIMEZONE)
+    current_precise_time = get_world_time(TIMEZONE)
     now_str = current_precise_time.isoformat()
     # === KONIEC ZMIANY ===
 
