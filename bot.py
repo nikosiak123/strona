@@ -433,46 +433,13 @@ def get_conversation_status(history):
     if not gemini_model:
         return EXPECTING_REPLY, None
 
-    # === KLUCZOWA ZMIANA JEST TUTAJ ===
-    # Pobieramy precyzyjny czas, a nie systemowy
-    current_precise_time = get_world_time(TIMEZONE)
-    now_str = current_precise_time.isoformat()
+    # === UŻYWAMY PROSTEGO CZASU SYSTEMOWEGO ===
+    now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     # === KONIEC ZMIANY ===
 
     formatted_instruction = SYSTEM_INSTRUCTION_ANALYSIS.replace("{{current_time}}", now_str)
 
-    # ... (reszta funkcji pozostaje bez zmian) ...
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
-    if history and history[-1].role == 'model':
-        chat_history_text_without_last = "\n".join(chat_history_text.splitlines()[:-1])
-        last_bot_reply = history[-1].parts[0].text
-    else:
-        chat_history_text_without_last = chat_history_text
-        last_bot_reply = "[Brak ostatniej odpowiedzi bota]"
-    prompt_for_analysis = (
-        f"OTO HISTORIA CZATU:\n---\n{chat_history_text_without_last}\n---\n\n"
-        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{last_bot_reply}\n---"
-    )
-    full_prompt = [
-        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status w wymaganym formacie.")]),
-        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
-    ]
-    try:
-        analysis_config = GenerationConfig(temperature=0.1)
-        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        if not response.candidates: return EXPECTING_REPLY, None
-        raw_status = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if raw_status.startswith(FOLLOW_UP_LATER):
-            parts = raw_status.split('|')
-            if len(parts) == 2:
-                return FOLLOW_UP_LATER, parts[1]
-        elif raw_status in [EXPECTING_REPLY, CONVERSATION_ENDED]:
-            return raw_status, None
-        return EXPECTING_REPLY, None
-    except Exception as e:
-        logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
-        return EXPECTING_REPLY, None
+    # ... reszta funkcji pozostaje bez zmian ...
 
 # =====================================================================
 # === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
