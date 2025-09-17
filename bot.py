@@ -186,9 +186,10 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 def get_ntp_time(timezone_str):
     """Pobiera aktualny, precyzyjny czas z serwera NTP i konwertuje do podanej strefy czasowej."""
     try:
-        # Nowa biblioteka robi to wszystko w jednej, prostej linii!
-        # Pobiera czas jako timestamp UTC.
-        utc_timestamp = ntp_time.time()
+        # === OSTATECZNA POPRAWKA SKŁADNI JEST TUTAJ ===
+        # Prawidłowe wywołanie to ntp_time.request(), a nie ntp_time.time()
+        utc_timestamp = ntp_time.request('pool.ntp.org', version=3)
+        # === KONIEC POPRAWKI ===
         
         # Konwertujemy timestamp na obiekt datetime z informacją o strefie UTC
         utc_time = datetime.fromtimestamp(utc_timestamp, tz=pytz.utc)
