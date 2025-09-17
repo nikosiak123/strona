@@ -62,6 +62,7 @@ else:
     print("!!! OSTRZEŻENIE: Brak pełnej konfiguracji Airtable w config.json.")
 
 # === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ (WARTOŚCI TESTOWE) ===
+NUDGE_TASKS_FILE = "nudge_tasks.json"
 UNREAD_FINAL_NUDGE_DELAY_HOURS = 0.015 # ok. 1 minuty
 READ_THUMB_NUDGE_DELAY_HOURS = 0.01 # ok. 40 sekund
 UNREAD_THUMB_FINAL_NUDGE_DELAY_HOURS = 0.02 # ok. 1.2 minuty
@@ -95,6 +96,7 @@ try:
         print(f"--- Model {MODEL_ID} załadowany OK.")
 except Exception as e:
     print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
+
 
 # =====================================================================
 # === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI ===============================
@@ -136,17 +138,14 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
-
-# --- KLUCZOWA POPRAWKA: Przywracamy tę funkcję ---
 def load_config():
     """Wczytuje pełną konfigurację z pliku JSON."""
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
+    except Exception as e:
         logging.critical(f"KRYTYCZNY BŁĄD wczytywania config.json: {e}")
         return {}
-# --- KONIEC POPRAWKI ---
 
 def get_user_profile(psid, page_access_token):
     try:
@@ -212,49 +211,49 @@ def save_history(user_psid, history):
 # =====================================================================
 # === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
 # =====================================================================
-def load_nudge_tasks():
-    if not os.path.exists(NUDGE_TASKS_FILE): return {}
+def load_nudge_tasks(tasks_file):
+    if not os.path.exists(tasks_file): return {}
     try:
-        with open(NUDGE_TASKS_FILE, 'r', encoding='utf-8') as f:
+        with open(tasks_file, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception: return {}
 
-def save_nudge_tasks(tasks):
+def save_nudge_tasks(tasks, tasks_file):
     try:
-        with open(NUDGE_TASKS_FILE, 'w', encoding='utf-8') as f:
+        with open(tasks_file, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2)
     except Exception as e:
         logging.error(f"Błąd zapisu zadań przypomnień: {e}")
 
-def cancel_nudge(psid):
-    tasks = load_nudge_tasks()
+def cancel_nudge(psid, tasks_file):
+    tasks = load_nudge_tasks(tasks_file)
     task_id_to_remove = next((task_id for task_id, task in tasks.items() if task.get("psid") == psid), None)
     if task_id_to_remove:
         del tasks[task_id_to_remove]
-        save_nudge_tasks(tasks)
+        save_nudge_tasks(tasks, tasks_file)
         logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
 
-def schedule_nudge(psid, page_id, delay_hours, status):
-    cancel_nudge(psid)
-    tasks = load_nudge_tasks()
+def schedule_nudge(psid, page_id, delay_hours, status, tasks_file):
+    cancel_nudge(psid, tasks_file)
+    tasks = load_nudge_tasks(tasks_file)
     task_id = str(uuid.uuid4())
     now = datetime.now(pytz.timezone(TIMEZONE))
     nudge_time = now + timedelta(hours=delay_hours)
     tasks[task_id] = {"psid": psid, "page_id": page_id, "nudge_time_iso": nudge_time.isoformat(), "status": status}
-    save_nudge_tasks(tasks)
+    save_nudge_tasks(tasks, tasks_file)
     logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid} za {delay_hours}h.")
 
-def handle_read_receipt(psid, page_id):
-    tasks = load_nudge_tasks()
+def handle_read_receipt(psid, page_id, tasks_file):
+    tasks = load_nudge_tasks(tasks_file)
     task_id, task_data = next(((tid, t) for tid, t in tasks.items() if t.get("psid") == psid), (None, None))
     if not task_data: return
     current_status = task_data.get("status")
     if current_status == "pending_initial_unread":
         logging.info(f"Użytkownik {psid} odczytał PIERWSZĄ wiadomość. Planuję wysłanie kciuka.")
-        schedule_nudge(psid, page_id, READ_THUMB_NUDGE_DELAY_HOURS, "pending_thumb_nudge")
+        schedule_nudge(psid, page_id, READ_THUMB_NUDGE_DELAY_HOURS, "pending_thumb_nudge", tasks_file)
     elif current_status == "pending_thumb_unread":
         logging.info(f"Użytkownik {psid} odczytał KCIUKA. Planuję finalne przypomnienie.")
-        schedule_nudge(psid, page_id, READ_THUMB_FINAL_NUDGE_DELAY_HOURS, "pending_final_nudge")
+        schedule_nudge(psid, page_id, READ_THUMB_FINAL_NUDGE_DELAY_HOURS, "pending_final_nudge", tasks_file)
 
 def check_and_send_nudges():
     logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
@@ -262,7 +261,7 @@ def check_and_send_nudges():
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return
-    tasks = load_nudge_tasks()
+    tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
@@ -298,7 +297,7 @@ def check_and_send_nudges():
                 tasks_to_modify[task_id] = task
     if tasks_to_modify:
         tasks.update(tasks_to_modify)
-        save_nudge_tasks(tasks)
+        save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
         logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
 
 # =====================================================================
@@ -340,14 +339,14 @@ def process_event(event_payload):
         recipient_id = event_payload.get("recipient", {}).get("id")
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
         if event_payload.get("read"):
-            handle_read_receipt(sender_id, recipient_id)
+            handle_read_receipt(sender_id, recipient_id, NUDGE_TASKS_FILE)
             return
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
         page_token = page_config.get("token")
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text: return
-        cancel_nudge(sender_id)
+        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
         history = load_history(sender_id)
@@ -366,7 +365,7 @@ def process_event(event_payload):
         send_message(sender_id, final_message_to_user, page_token)
         history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
         if AGREEMENT_MARKER not in final_message_to_user:
-            schedule_nudge(sender_id, recipient_id, UNREAD_FINAL_NUDGE_DELAY_HOURS, "pending_initial_unread")
+            schedule_nudge(sender_id, recipient_id, UNREAD_FINAL_NUDGE_DELAY_HOURS, "pending_initial_unread", NUDGE_TASKS_FILE)
         save_history(sender_id, history)
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
@@ -394,7 +393,7 @@ def webhook_handle():
         return Response("NOT_PAGE_EVENT", status=404)
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
     ensure_dir(HISTORY_DIR)
     
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
