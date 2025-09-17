@@ -83,33 +83,43 @@ SAFETY_SETTINGS = [
 EXPECTING_REPLY = "EXPECTING_REPLY"
 CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
-
+FOLLOW_UP_WINDOW_HOURS = 23 
 
 # === NOWA INSTRUKCJA SYSTEMOWA DLA ANALITYKA AI ===
 SYSTEM_INSTRUCTION_ANALYSIS = f"""
-Twoim zadaniem jest analiza stanu konwersacji między asystentem (botem) a użytkownikiem. Na podstawie historii czatu i ostatniej wiadomości bota, musisz określić, czy bot powinien spodziewać się odpowiedzi.
+Twoim zadaniem jest analiza stanu konwersacji i określenie, czy bot powinien spodziewać się odpowiedzi.
 
-Twoja odpowiedź MUSI być TYLKO I WYŁĄCZNIE jednym z trzech poniższych statusów:
+### Krok 1: Analiza Czasu
+- Aktualna data i godzina to: `{{current_time}}`.
+- Pamiętaj, że bot może wysyłać wiadomości tylko w ciągu 24 godzin od ostatniej wiadomości klienta.
+
+### Krok 2: Analiza Intencji Klienta
+Na podstawie historii czatu i ostatniej wiadomości bota, wybierz JEDEN z trzech poniższych statusów:
 
 1.  `{EXPECTING_REPLY}`
-    - Użyj, gdy bot zadał bezpośrednie pytanie lub gdy rozmowa jest wyraźnie w toku i oczekiwana jest kontynuacja od użytkownika.
-    - Przykład:
-      Klient: 8 klasa podstawówki
-      Bot: Super! Lekcja kosztuje 65 zł. Czy chcieliby Państwo umówić lekcję testową?
+    - Użyj, gdy bot zadał bezpośrednie pytanie lub gdy rozmowa jest w toku.
+    - Zwróć TYLKO ten status. Przykład:
+      `{EXPECTING_REPLY}`
 
 2.  `{CONVERSATION_ENDED}`
-    - Użyj, gdy użytkownik jednoznacznie zakończył rozmowę, odrzucił ofertę, a bot grzecznie się pożegnał. Dalsze przypominanie byłoby nachalne.
-    - Przykład:
-      Klient: online to nie chcę
-      Bot: Rozumiem. Gdyby zmienili Państwo zdanie, zapraszam do kontaktu.
+    - Użyj, gdy użytkownik jednoznacznie zakończył rozmowę.
+    - Zwróć TYLKO ten status. Przykład:
+      `{CONVERSATION_ENDED}`
 
 3.  `{FOLLOW_UP_LATER}`
-    - Użyj, gdy użytkownik zadeklarował, że odezwie się później (np. "porozmawiam z mężem", "dam znać wieczorem"). Bot nie powinien wysyłać automatycznego przypomnienia, bo wie, że ma czekać.
-    - Przykład:
-      Klient: dobrze porozmawiam z córką dziś wieczorem
-      Bot: Oczywiście, w takim razie czekam na wiadomość.
+    - Użyj, gdy użytkownik zadeklarował, że odezwie się później (np. "porozmawiam z mężem", "dam znać wieczorem", "jak syn wróci ze szkoły").
+    - **Twoim zadaniem jest oszacowanie, kiedy to będzie i zwrócenie DATY i GODZINY w formacie ISO 8601.**
+    - Bądź konserwatywny, dodaj trochę buforu czasowego.
+    - **WAŻNE:** Jeśli szacowany czas jest DALSZY niż 23 godziny od teraz, zwróć `{CONVERSATION_ENDED}`.
+    - Twoja odpowiedź MUSI mieć format: `{FOLLOW_UP_LATER}|YYYY-MM-DDTHH:MM:SS`
+    - Przykład 1: Klient pisze "napiszę wieczorem", jest godzina 14:00. Wieczór to ok. 19:00, dodajesz bufor -> 20:30. Zwracasz:
+      `{FOLLOW_UP_LATER}|2025-09-18T20:30:00`
+    - Przykład 2: Klient pisze "jak syn wróci ze szkoły", jest godzina 12:00. Szkoła kończy się ok. 15:00-16:00, dodajesz bufor -> 18:00. Zwracasz:
+      `{FOLLOW_UP_LATER}|2025-09-18T18:00:00`
+    - Przykład 3: Klient pisze "odezwę się za 2 dni". To jest > 23h. Zwracasz:
+      `{CONVERSATION_ENDED}`
 
-Przeanalizuj poniższą historię i ostatnią wiadomość bota, a następnie zwróć JEDEN z trzech statusów.
+Przeanalizuj poniższą historię i ostatnią wiadomość bota, a następnie zwróć odpowiedź w wymaganym formacie.
 """
 
 
@@ -266,15 +276,23 @@ def cancel_nudge(psid, tasks_file):
         save_nudge_tasks(tasks, tasks_file)
         logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
 
-def schedule_nudge(psid, page_id, delay_hours, status, tasks_file):
-    cancel_nudge(psid, tasks_file)
-    tasks = load_nudge_tasks(tasks_file)
+def schedule_nudge(psid, page_id, status, nudge_time_iso=None, nudge_message=None):
+    cancel_nudge(psid) # Zawsze anuluj stare zadanie
+    tasks = load_nudge_tasks()
     task_id = str(uuid.uuid4())
-    now = datetime.now(pytz.timezone(TIMEZONE))
-    nudge_time = now + timedelta(hours=delay_hours)
-    tasks[task_id] = {"psid": psid, "page_id": page_id, "nudge_time_iso": nudge_time.isoformat(), "status": status}
-    save_nudge_tasks(tasks, tasks_file)
-    logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid} za {delay_hours}h.")
+    
+    task_data = {"psid": psid, "page_id": page_id, "status": status}
+
+    if nudge_time_iso:
+        task_data["nudge_time_iso"] = nudge_time_iso
+    # Dodajemy nowe pola
+    if nudge_message:
+        task_data["nudge_message"] = nudge_message
+    
+    tasks[task_id] = task_data
+    save_nudge_tasks(tasks)
+    logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid}.")
+
 
 def handle_read_receipt(psid, page_id, tasks_file):
     tasks = load_nudge_tasks(tasks_file)
@@ -289,16 +307,19 @@ def handle_read_receipt(psid, page_id, tasks_file):
         schedule_nudge(psid, page_id, READ_THUMB_FINAL_NUDGE_DELAY_HOURS, "pending_final_nudge", tasks_file)
 
 def check_and_send_nudges():
-    #logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    # ... (logika tej funkcji pozostaje bardzo podobna, ale teraz wysyła spersonalizowaną wiadomość)
+    # Poniżej pełna, nowa wersja
+    logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return
-    tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
+    tasks = load_nudge_tasks()
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
         if not task.get("status", "").startswith("pending"): continue
+            
         nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
         if now >= nudge_time:
             is_in_window = NUDGE_WINDOW_START <= now.hour < NUDGE_WINDOW_END
@@ -306,32 +327,29 @@ def check_and_send_nudges():
                 logging.info(f"[Scheduler] Czas na przypomnienie (status: {task['status']}) dla PSID {task['psid']}")
                 page_config = page_config_from_file.get(task["page_id"])
                 if page_config and page_config.get("token"):
-                    psid, page_id, token = task['psid'], task['page_id'], page_config["token"]
-                    current_status = task['status']
-                    if current_status == 'pending_initial_unread':
-                        send_message(psid, FINAL_NUDGE_TEXT, token)
-                        task['status'] = 'done'
-                    elif current_status == 'pending_thumb_nudge':
-                        send_message(psid, NUDGE_EMOJI, token)
-                        task['status'] = 'pending_thumb_unread'
-                        task['nudge_time_iso'] = (now + timedelta(hours=UNREAD_THUMB_FINAL_NUDGE_DELAY_HOURS)).isoformat()
-                    elif current_status == 'pending_thumb_unread' or current_status == 'pending_final_nudge':
-                        send_message(psid, FINAL_NUDGE_TEXT, token)
-                        task['status'] = 'done'
+                    psid, token = task['psid'], page_config["token"]
+                    message_to_send = task.get("nudge_message") # Pobierz spersonalizowaną wiadomość
+                    
+                    if message_to_send:
+                        send_message(psid, message_to_send, token)
+                    
+                    task['status'] = 'done' # Zawsze kończymy po jednym przypomnieniu
                     tasks_to_modify[task_id] = task
                 else:
                     task["status"] = "failed_no_token"
                     tasks_to_modify[task_id] = task
             else:
                 logging.info(f"[Scheduler] Zła pora. Przeplanowuję {task['psid']}...")
-                next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=5, second=0, microsecond=0)
+                next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=5)
                 if now.hour >= NUDGE_WINDOW_END: next_day_start += timedelta(days=1)
                 task["nudge_time_iso"] = next_day_start.isoformat()
                 tasks_to_modify[task_id] = task
+
     if tasks_to_modify:
         tasks.update(tasks_to_modify)
-        save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+        save_nudge_tasks(tasks)
         logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
+
 
 # =====================================================================
 # === FUNKCJE KOMUNIKACJI =============================================
@@ -347,12 +365,30 @@ def send_message(recipient_id, message_text, page_access_token):
     except requests.exceptions.RequestException as e:
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
-def get_gemini_response(history, prompt_details):
-    if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
-    system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
-        prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
-    full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
-                   Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
+def get_gemini_response(history, prompt_details, is_follow_up=False):
+    """Główna funkcja konwersacyjna. Może też generować wiadomość przypominającą."""
+    if not gemini_model:
+        return "Przepraszam, mam chwilowy problem z moim systemem."
+
+    # Wybierz instrukcję w zależności od zadania
+    if is_follow_up:
+        # Nowa, prosta instrukcja dla przypomnienia
+        system_instruction = (
+            "Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, spersonalizowanej wiadomości przypominającej. "
+            "Na podstawie historii rozmowy, nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję. "
+            "Przykład: 'Dzień dobry, chciałem tylko zapytać, czy udało się Państwu porozmawiać z córką w sprawie lekcji?'"
+        )
+        # Bierzemy tylko ostatnie kilka wiadomości, aby dać kontekst
+        history_context = history[-4:] 
+        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
+                       Content(role="model", parts=[Part.from_text("Rozumiem. Stworzę wiadomość przypominającą.")])] + history_context
+    else:
+        # Standardowa rozmowa
+        system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
+            prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
+        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
+                       Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
+    
     try:
         response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
@@ -362,16 +398,17 @@ def get_gemini_response(history, prompt_details):
         return "Przepraszam, wystąpił nieoczekiwany błąd."
 
 def get_conversation_status(history):
-    """Używa AI do analizy i zwraca status konwersacji."""
+    """Używa AI do analizy i zwraca status konwersacji oraz opcjonalnie czas."""
     if not gemini_model:
-        logging.warning("Analityk AI niedostępny, domyślnie włączam przypomnienia.")
-        return EXPECTING_REPLY
+        return EXPECTING_REPLY, None
 
-    # Formatujemy historię dla analityka
+    # Pobierz aktualny czas i przekaż go do AI
+    now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+    # Zastąp placeholder w instrukcji
+    formatted_instruction = SYSTEM_INSTRUCTION_ANALYSIS.replace("{{current_time}}", now_str)
+
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     
-    # Usuwamy ostatnią wiadomość bota z historii, aby przedstawić ją jako "ostatnia wiadomość"
-    # To daje lepszy kontekst analitykowi
     if history and history[-1].role == 'model':
         chat_history_text_without_last = "\n".join(chat_history_text.splitlines()[:-1])
         last_bot_reply = history[-1].parts[0].text
@@ -380,13 +417,13 @@ def get_conversation_status(history):
         last_bot_reply = "[Brak ostatniej odpowiedzi bota]"
 
     prompt_for_analysis = (
-        f"OTO HISTORIA CZATU (bez ostatniej odpowiedzi bota):\n---\n{chat_history_text_without_last}\n---\n\n"
+        f"OTO HISTORIA CZATU:\n---\n{chat_history_text_without_last}\n---\n\n"
         f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{last_bot_reply}\n---"
     )
 
     full_prompt = [
-        Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_ANALYSIS)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status.")]),
+        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status w wymaganym formacie.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
     
@@ -394,21 +431,22 @@ def get_conversation_status(history):
         analysis_config = GenerationConfig(temperature=0.1)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
         
-        if not response.candidates:
-            logging.warning("Analityk AI nie wygenerował odpowiedzi. Domyślnie włączam przypomnienia.")
-            return EXPECTING_REPLY
+        if not response.candidates: return EXPECTING_REPLY, None
 
-        status = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        raw_status = "".join(part.text for part in response.candidates[0].content.parts).strip()
         
-        if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]:
-            return status
-        else:
-            logging.warning(f"Analityk AI zwrócił nieoczekiwany status: '{status}'. Domyślnie włączam przypomnienia.")
-            return EXPECTING_REPLY
+        if raw_status.startswith(FOLLOW_UP_LATER):
+            parts = raw_status.split('|')
+            if len(parts) == 2:
+                return FOLLOW_UP_LATER, parts[1] # Zwracamy status i czas
+        elif raw_status in [EXPECTING_REPLY, CONVERSATION_ENDED]:
+            return raw_status, None # Zwracamy status i brak czasu
+            
+        return EXPECTING_REPLY, None
 
     except Exception as e:
         logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
-        return EXPECTING_REPLY
+        return EXPECTING_REPLY, None
 
 # =====================================================================
 # === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
@@ -426,8 +464,13 @@ def process_event(event_payload):
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
             return
         
+        # Anuluj istniejące przypomnienia, jeśli użytkownik odczytał lub napisał
+        if event_payload.get("read") or event_payload.get("message"):
+             cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+
+        # Jeśli to tylko zdarzenie odczytania, zakończ
         if event_payload.get("read"):
-            handle_read_receipt(sender_id, recipient_id, NUDGE_TASKS_FILE)
+            logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
             return
             
         page_config = PAGE_CONFIG.get(recipient_id)
@@ -439,8 +482,6 @@ def process_event(event_payload):
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text:
             return
-        
-        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
@@ -460,9 +501,8 @@ def process_event(event_payload):
         
         # --- NOWA LOGIKA ANALIZY KONWERSACJI ---
         logging.info("Wysyłam zapytanie do AI Gemini (analiza statusu)...")
-        # Przekazujemy pełną, zaktualizowaną historię do analizy
-        conversation_status = get_conversation_status(history)
-        logging.info(f"AI (analiza) zwróciło status: {conversation_status}")
+        conversation_status, follow_up_time_iso = get_conversation_status(history)
+        logging.info(f"AI (analiza) zwróciło status: {conversation_status}, Czas: {follow_up_time_iso}")
         # --- KONIEC NOWEJ LOGIKI ---
         
         final_message_to_user = ""
@@ -480,9 +520,24 @@ def process_event(event_payload):
         send_message(sender_id, final_message_to_user, page_token)
         
         # --- ZMODYFIKOWANA LOGIKA PLANOWANIA PRZYPOMNIEŃ ---
-        if conversation_status == EXPECTING_REPLY:
-            logging.info("Status to EXPECTING_REPLY. Planuję przypomnienie.")
-            schedule_nudge(sender_id, recipient_id, UNREAD_FINAL_NUDGE_DELAY_HOURS, "pending_initial_unread", NUDGE_TASKS_FILE)
+        if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
+            logging.info("Status to FOLLOW_UP_LATER. Generuję spersonalizowane przypomnienie...")
+            
+            # Poproś AI o stworzenie wiadomości przypominającej
+            follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
+            logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
+            
+            # Zaplanuj wysłanie tej wiadomości o określonej godzinie
+            schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
+                           nudge_time_iso=follow_up_time_iso, 
+                           nudge_message=follow_up_message,
+                           tasks_file=NUDGE_TASKS_FILE)
+        
+        elif conversation_status == EXPECTING_REPLY:
+            # Ta sekcja jest teraz pusta, bo nie używamy już starego systemu z kciukami.
+            # W przyszłości można tu przywrócić prostszy mechanizm.
+            logging.info("Status to EXPECTING_REPLY. (Obecnie brak akcji przypominającej)")
+            pass
         else:
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
         # --- KONIEC ZMODYFIKOWANEJ LOGIKI ---
