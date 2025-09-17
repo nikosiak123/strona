@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: FINALNA (AI + Airtable + Zaawansowane Przypomnienia)
+# Wersja: FINALNA (AI + Airtable + Zaawansowane Przypomnienia - Wersja Testowa)
 
 from flask import Flask, request, Response
 import threading
@@ -61,12 +61,11 @@ if all([AIRTABLE_API_KEY, AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME]):
 else:
     print("!!! OSTRZEŻENIE: Brak pełnej konfiguracji Airtable w config.json.")
 
-# === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ ===
-NUDGE_TASKS_FILE = "nudge_tasks.json"
-# Użyj krótkich czasów do testów. Po testach zmień na 6 i 18.
-READ_NUDGE1_DELAY_HOURS = 0.01 # 6 minut
-READ_NUDGE2_DELAY_HOURS = 0.02 # 12 minut
-UNREAD_DELAY_HOURS = 0.015 # 9 minut
+# === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ (WARTOŚCI TESTOWE) ===
+UNREAD_FINAL_NUDGE_DELAY_HOURS = 0.015 # ok. 1 minuty
+READ_THUMB_NUDGE_DELAY_HOURS = 0.01 # ok. 40 sekund
+UNREAD_THUMB_FINAL_NUDGE_DELAY_HOURS = 0.02 # ok. 1.2 minuty
+READ_THUMB_FINAL_NUDGE_DELAY_HOURS = 0.01 # ok. 40 sekund
 TIMEZONE = "Europe/Warsaw"
 NUDGE_WINDOW_START, NUDGE_WINDOW_END = 6, 23
 NUDGE_EMOJI = "👍"
@@ -96,8 +95,6 @@ try:
         print(f"--- Model {MODEL_ID} załadowany OK.")
 except Exception as e:
     print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
-    logging.critical(f"KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", exc_info=True)
-
 
 # =====================================================================
 # === GŁÓWNA INSTRUKCJA SYSTEMOWA DLA AI ===============================
@@ -119,9 +116,9 @@ Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji onl
 
 ### Kluczowe Zadania i Przepływ Rozmowy
 Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wiadomości i NIE zadając pytań, jeśli znasz już odpowiedź**:
-1.  **Powitanie:** JEŚLI pierwsza wiadomość użytkownika to ogólne powitanie (np. "hej", "dzień dobry"), odpowiedz powitaniem i zapytaj, w czym możesz pomóc. JEŚLI użytkownik od razu pisze, że szuka korepetycji, przejdź bezpośrednio do kroku 2.
-2.  **Zbieranie informacji (Szkoła i klasa):** Zapytaj o klasę i typ szkoły ucznia. Przykład: "Świetnie! Do której klasy i jakiego typu szkoły uczęszcza uczeń?"
-3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły (np. "8 klasa podstawówki", "2 liceum"), przejdź od razu do kroku 5 (Prezentacja oferty). NIE dopytuj ponownie o typ szkoły.
+1.  **Powitanie:** JEŚLI pierwsza wiadomość użytkownika to ogólne powitanie, odpowiedz powitaniem i zapytaj, w czym możesz pomóc. JEŚLI użytkownik od razu pisze, że szuka korepetycji, przejdź bezpośrednio do kroku 2.
+2.  **Zbieranie informacji (Szkoła i klasa):** Zapytaj o klasę i typ szkoły ucznia.
+3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły, przejdź od razu do kroku 5.
 4.  **Zbieranie informacji (Poziom):** JEŚLI typ szkoły to liceum lub technikum i nie podano poziomu, w osobnej wiadomości zapytaj o poziom.
 5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę i format lekcji.
 6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji.
@@ -134,20 +131,17 @@ Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wia
 ### Twój GŁÓWNY CEL i Format Odpowiedzi
 Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcję.
 - Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji, Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
-- Przykład poprawnej odpowiedzi: "Doskonale, to świetna decyzja! {agreement_marker}"
 """
 
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
-
 def load_config():
-    """Wczytuje pełną konfigurację z pliku JSON."""
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        logging.critical(f"KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
+    except Exception as e:
+        logging.critical(f"KRYTYCZNY BŁĄD wczytywania config.json: {e}")
         return {}
 
 def get_user_profile(psid, page_access_token):
@@ -157,18 +151,17 @@ def get_user_profile(psid, page_access_token):
         response.raise_for_status()
         data = response.json()
         return data.get("first_name"), data.get("last_name")
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
         return None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
     if not clients_table_obj:
-        logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
+        logging.error("Airtable nie jest skonfigurowane.")
         return None
     try:
         existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
-        if existing_client:
-            return psid
+        if existing_client: return psid
         first_name, last_name = get_user_profile(psid, page_access_token)
         new_client_data = {"ClientID": psid, "Źródło": "Messenger Bot"}
         if first_name: new_client_data["Imię"] = first_name
@@ -176,7 +169,7 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
         clients_table_obj.create(new_client_data)
         return psid
     except Exception as e:
-        logging.error(f"Wystąpił błąd podczas operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
+        logging.error(f"Błąd operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
         return None
 
 def ensure_dir(directory):
@@ -215,7 +208,6 @@ def save_history(user_psid, history):
 # =====================================================================
 # === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
 # =====================================================================
-
 def load_nudge_tasks():
     if not os.path.exists(NUDGE_TASKS_FILE): return {}
     try:
@@ -244,81 +236,69 @@ def schedule_nudge(psid, page_id, delay_hours, status):
     task_id = str(uuid.uuid4())
     now = datetime.now(pytz.timezone(TIMEZONE))
     nudge_time = now + timedelta(hours=delay_hours)
-    
-    tasks[task_id] = {
-        "psid": psid, "page_id": page_id, "nudge_time_iso": nudge_time.isoformat(),
-        "status": status
-    }
+    tasks[task_id] = {"psid": psid, "page_id": page_id, "nudge_time_iso": nudge_time.isoformat(), "status": status}
     save_nudge_tasks(tasks)
     logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid} za {delay_hours}h.")
 
 def handle_read_receipt(psid, page_id):
     tasks = load_nudge_tasks()
-    task_id_to_update = next((task_id for task_id, task in tasks.items() if task.get("psid") == psid and task.get("status") == "pending_unread"), None)
-    if task_id_to_update:
-        logging.info(f"Użytkownik {psid} odczytał wiadomość. Zmieniam harmonogram przypomnienia.")
-        schedule_nudge(psid, page_id, READ_NUDGE1_DELAY_HOURS, "pending_read_nudge1")
+    task_id, task_data = next(((tid, t) for tid, t in tasks.items() if t.get("psid") == psid), (None, None))
+    if not task_data: return
+    current_status = task_data.get("status")
+    if current_status == "pending_initial_unread":
+        logging.info(f"Użytkownik {psid} odczytał PIERWSZĄ wiadomość. Planuję wysłanie kciuka.")
+        schedule_nudge(psid, page_id, READ_THUMB_NUDGE_DELAY_HOURS, "pending_thumb_nudge")
+    elif current_status == "pending_thumb_unread":
+        logging.info(f"Użytkownik {psid} odczytał KCIUKA. Planuję finalne przypomnienie.")
+        schedule_nudge(psid, page_id, READ_THUMB_FINAL_NUDGE_DELAY_HOURS, "pending_final_nudge")
 
 def check_and_send_nudges():
-    logging.info("[Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return
-
     tasks = load_nudge_tasks()
     now = datetime.now(pytz.timezone(TIMEZONE))
-    tasks_modified = False
-    
+    tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
-        if not task.get("status", "").startswith("pending"):
-            continue
-
+        if not task.get("status", "").startswith("pending"): continue
         nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
-        
         if now >= nudge_time:
-            is_in_window = NUDGE_WINDOW_START <= now.hour <= NUDGE_WINDOW_END
-            
+            is_in_window = NUDGE_WINDOW_START <= now.hour < NUDGE_WINDOW_END
             if is_in_window:
-                logging.info(f"[Scheduler] Wysyłam przypomnienie (status: {task['status']}) do PSID {task['psid']}...")
+                logging.info(f"[Scheduler] Czas na przypomnienie (status: {task['status']}) dla PSID {task['psid']}")
                 page_config = page_config_from_file.get(task["page_id"])
-                
                 if page_config and page_config.get("token"):
-                    message_to_send = ""
+                    psid, page_id, token = task['psid'], task['page_id'], page_config["token"]
                     current_status = task['status']
-                    
-                    if current_status == 'pending_unread':
-                        message_to_send = FINAL_NUDGE_TEXT
-                        task["status"] = "done"
-                        tasks_modified = True
-                    elif current_status == 'pending_read_nudge1':
-                        message_to_send = NUDGE_EMOJI
-                        # Przeplanuj na kolejny etap
-                        schedule_nudge(task['psid'], task['page_id'], READ_NUDGE2_DELAY_HOURS, "pending_read_nudge2")
-                    elif current_status == 'pending_read_nudge2':
-                        message_to_send = FINAL_NUDGE_TEXT
-                        task["status"] = "done"
-                        tasks_modified = True
-
-                    if message_to_send:
-                         send_message(task["psid"], message_to_send, page_config["token"])
-
+                    if current_status == 'pending_initial_unread':
+                        send_message(psid, FINAL_NUDGE_TEXT, token)
+                        task['status'] = 'done'
+                    elif current_status == 'pending_thumb_nudge':
+                        send_message(psid, NUDGE_EMOJI, token)
+                        task['status'] = 'pending_thumb_unread'
+                        task['nudge_time_iso'] = (now + timedelta(hours=UNREAD_THUMB_FINAL_NUDGE_DELAY_HOURS)).isoformat()
+                    elif current_status == 'pending_thumb_unread' or current_status == 'pending_final_nudge':
+                        send_message(psid, FINAL_NUDGE_TEXT, token)
+                        task['status'] = 'done'
+                    tasks_to_modify[task_id] = task
                 else:
                     task["status"] = "failed_no_token"
-                    tasks_modified = True
+                    tasks_to_modify[task_id] = task
             else:
                 logging.info(f"[Scheduler] Zła pora. Przeplanowuję {task['psid']}...")
-                next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=5)
-                if now.hour >= NUDGE_WINDOW_END:
-                    next_day_start += timedelta(days=1)
+                next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=5, second=0, microsecond=0)
+                if now.hour >= NUDGE_WINDOW_END: next_day_start += timedelta(days=1)
                 task["nudge_time_iso"] = next_day_start.isoformat()
-                tasks_modified = True
-
-    if tasks_modified:
+                tasks_to_modify[task_id] = task
+    if tasks_to_modify:
+        tasks.update(tasks_to_modify)
         save_nudge_tasks(tasks)
+        logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
 
 # =====================================================================
-# === FUNKCJE KOMUNIKACJI (bez zmian) =================================
+# === FUNKCJE KOMUNIKACJI =============================================
 # =====================================================================
 def send_message(recipient_id, message_text, page_access_token):
     if not all([recipient_id, message_text, page_access_token]): return
@@ -352,51 +332,37 @@ def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
         if not PAGE_CONFIG: return
-            
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
-
-        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
-            return
-        
+        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
         if event_payload.get("read"):
             handle_read_receipt(sender_id, recipient_id)
             return
-
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
-
         page_token = page_config.get("token")
-        
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text: return
-        
         cancel_nudge(sender_id)
-        
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
         ai_response_raw = get_gemini_response(history, prompt_details)
-        
         final_message_to_user = ""
-        
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
                 reservation_link = f"https://zakręcone-korepetycje.pl/?clientID={client_id}"
                 final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nProszę go nie udostępniać nikomu."
             else:
-                final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji. Proszę spróbować ponownie za chwilę."
+                final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
         else:
             final_message_to_user = ai_response_raw
-
         send_message(sender_id, final_message_to_user, page_token)
         history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
-        
         if AGREEMENT_MARKER not in final_message_to_user:
-            schedule_nudge(sender_id, recipient_id, UNREAD_DELAY_HOURS, "pending_unread")
-
+            schedule_nudge(sender_id, recipient_id, UNREAD_FINAL_NUDGE_DELAY_HOURS, "pending_initial_unread")
         save_history(sender_id, history)
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
@@ -428,7 +394,7 @@ if __name__ == '__main__':
     ensure_dir(HISTORY_DIR)
     
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
-    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=20) # Sprawdzaj co minutę
+    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=20) # Sprawdzaj co 20 sekund
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
     
