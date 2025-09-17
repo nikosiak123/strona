@@ -38,8 +38,8 @@ except (FileNotFoundError, json.JSONDecodeError) as e:
     exit()
 
 NUDGE_TASKS_FILE = "nudge_tasks.json"
-READ_DELAY_HOURS = 6
-UNREAD_DELAY_HOURS = 18
+READ_DELAY_MINUTES = 1
+UNREAD_DELAY_MINUTES = 1.5
 TIMEZONE = "Europe/Warsaw"
 NUDGE_WINDOW_START = 6  # Godzina 6:00
 NUDGE_WINDOW_END = 23   # Godzina 23:59 (w praktyce do północy)
@@ -113,30 +113,31 @@ def cancel_nudge(psid):
         save_nudge_tasks(tasks)
         logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
 
-def schedule_nudge(psid, page_id, delay_hours):
+def schedule_nudge(psid, page_id, delay_minutes):
     """Planuje nowe zadanie przypomnienia, anulując poprzednie."""
     cancel_nudge(psid) # Zawsze anuluj stare zadanie przed dodaniem nowego
     
     tasks = load_nudge_tasks()
     task_id = str(uuid.uuid4())
     now = datetime.now(pytz.timezone(TIMEZONE))
-    nudge_time = now + timedelta(hours=delay_hours)
+    # ZMIANA: Używamy minut zamiast godzin
+    nudge_time = now + timedelta(minutes=delay_minutes)
     
     tasks[task_id] = {
         "psid": psid,
         "page_id": page_id,
         "nudge_time_iso": nudge_time.isoformat(),
-        "delay_hours": delay_hours,
+        "delay_minutes": delay_minutes,
         "status": "pending"
     }
     save_nudge_tasks(tasks)
-    logging.info(f"Zaplanowano przypomnienie dla PSID {psid} za {delay_hours}h.")
+    logging.info(f"Zaplanowano przypomnienie dla PSID {psid} za {delay_minutes} min.")
 
 def handle_read_receipt(psid, page_id):
     """Obsługuje zdarzenie odczytania wiadomości przez użytkownika."""
     logging.info(f"Użytkownik {psid} odczytał wiadomość. Zmieniam harmonogram przypomnienia.")
     # Anuluj stare przypomnienie "nieprzeczytane" (18h) i ustaw nowe "przeczytane" (6h)
-    schedule_nudge(psid, page_id, READ_DELAY_HOURS)
+    schedule_nudge(psid, page_id, READ_DELAY_MINUTES)
 
 
 # =====================================================================
@@ -433,7 +434,7 @@ def process_event(event_payload):
         
         # --- ZMIANA 3: Zaplanuj przypomnienie po wysłaniu wiadomości ---
         if AGREEMENT_MARKER not in final_message_to_user: # Nie planuj przypomnienia, jeśli wysłaliśmy link
-            schedule_nudge(sender_id, recipient_id, UNREAD_DELAY_HOURS)
+            schedule_nudge(sender_id, recipient_id, UNREAD_DELAY_MINUTES)
         # --- KONIEC ZMIANY ---
 
         save_history(sender_id, history)
