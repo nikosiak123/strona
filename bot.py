@@ -425,7 +425,7 @@ def process_event(event_payload):
         send_message(sender_id, final_message_to_user, page_token)
         if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
             try:
-                nudge_time = datetime.fromisoformat(follow_up_time_iso)
+                nudge_time = datetime.fromisoformat(follow_up_time_iso).astimezone(pytz.timezone(TIMEZONE))
                 now = datetime.now(pytz.timezone(TIMEZONE))
                 if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
                     logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
