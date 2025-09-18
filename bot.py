@@ -332,9 +332,7 @@ def classify_conversation(history):
     """Etap 1: Używa AI do sklasyfikowania intencji klienta."""
     if not gemini_model: return EXPECTING_REPLY
 
-    # Formatujemy tylko ostatnie wiadomości, to wystarczy do klasyfikacji
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
-    
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
     
     full_prompt = [
@@ -342,8 +340,16 @@ def classify_conversation(history):
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
+
+    # === DODANO PRINT DLA DEBUGOWANIA ===
+    print("\n" + "="*20 + " PROMPT DLA AI (Klasyfikator) " + "="*20)
+    for msg in full_prompt:
+        print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    print("="*56 + "\n")
+    # === KONIEC DODAWANIA PRINT ===
+
     try:
-        analysis_config = GenerationConfig(temperature=0.0) # Maksymalnie precyzyjna odpowiedź
+        analysis_config = GenerationConfig(temperature=0.0)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
         status = "".join(part.text for part in response.candidates[0].content.parts).strip()
         if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]:
@@ -360,10 +366,7 @@ def estimate_follow_up_time(history):
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("{{current_time}}", now_str)
     
-    # === POPRAWKA LITERÓWKI JEST TUTAJ (goparts -> parts) ===
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
-    # === KONIEC POPRAWKI ===
-    
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
     
     full_prompt = [
@@ -371,6 +374,14 @@ def estimate_follow_up_time(history):
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
+
+    # === DODANO PRINT DLA DEBUGOWANIA ===
+    print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
+    for msg in full_prompt:
+        print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    print("="*62 + "\n")
+    # === KONIEC DODAWANIA PRINT ===
+
     try:
         analysis_config = GenerationConfig(temperature=0.2)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
@@ -386,7 +397,9 @@ def estimate_follow_up_time(history):
         return None
 
 def get_gemini_response(history, prompt_details, is_follow_up=False):
+    """Główna funkcja konwersacyjna. Może też generować wiadomość przypominającą."""
     if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
+    
     if is_follow_up:
         system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, spersonalizowanej wiadomości przypominającej. "
                               "Na podstawie historii rozmowy, nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
@@ -398,6 +411,14 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
             prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
         full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
                        Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
+    
+    # === DODANO PRINT DLA DEBUGOWANIA ===
+    print("\n" + "="*20 + " PROMPT DLA AI (Rozmowa/Przypomnienie) " + "="*20)
+    for msg in full_prompt:
+        print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    print("="*66 + "\n")
+    # === KONIEC DODAWANIA PRINT ===
+
     try:
         response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
