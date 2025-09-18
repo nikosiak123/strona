@@ -166,6 +166,69 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
+
+def get_conversation_status(history):
+    """Używa AI do analizy i zwraca status konwersacji oraz opcjonalnie czas."""
+    if not gemini_model:
+        return EXPECTING_REPLY, None
+
+    # Pobieramy czas systemowy
+    now_with_tz = datetime.now(pytz.timezone(TIMEZONE))
+    now_str = now_with_tz.isoformat()
+    
+    print(f"--- DEBUG: Czas wysyłany do analityka AI: {now_str} ---")
+
+    # Tworzymy finalną, wypełnioną wersję instrukcji
+    formatted_instruction = SYSTEM_INSTRUCTION_ANALYSIS.replace("{{current_time}}", now_str)
+    
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
+    
+    if history and history[-1].role == 'model':
+        chat_history_text_without_last = "\n".join(chat_history_text.splitlines()[:-1])
+        last_bot_reply = history[-1].parts[0].text
+    else:
+        chat_history_text_without_last = chat_history_text
+        last_bot_reply = "[Brak ostatniej odpowiedzi bota]"
+
+    prompt_for_analysis = (
+        f"OTO HISTORIA CZATU:\n---\n{chat_history_text_without_last}\n---\n\n"
+        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{last_bot_reply}\n---"
+    )
+
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status w wymaganym formacie.")]),
+        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
+    ]
+    
+    # print("\n" + "="*20 + " PROMPT DLA AI (Analityk Statusu) " + "="*20)
+    # for msg in full_prompt:
+    #     print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    # print("="*60 + "\n")
+    
+    try:
+        analysis_config = GenerationConfig(temperature=0.1)
+        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        
+        if not response.candidates:
+            logging.warning("Analityk AI nie wygenerował odpowiedzi. Domyślnie włączam przypomnienia.")
+            return EXPECTING_REPLY, None
+
+        raw_status = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        
+        if raw_status.startswith(FOLLOW_UP_LATER):
+            parts = raw_status.split('|')
+            if len(parts) == 2:
+                return FOLLOW_UP_LATER, parts[1]
+        elif raw_status in [EXPECTING_REPLY, CONVERSATION_ENDED]:
+            return raw_status, None
+            
+        return EXPECTING_REPLY, None
+
+    except Exception as e:
+        logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
+        return EXPECTING_REPLY, None
+
 def load_config():
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
