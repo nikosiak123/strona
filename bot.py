@@ -102,37 +102,36 @@ except Exception as e:
 # =====================================================================
 # === INSTRUKCJE SYSTEMOWE DLA AI =====================================
 # =====================================================================
-SYSTEM_INSTRUCTION_ANALYSIS = f"""
-Twoim zadaniem jest analiza stanu konwersacji i określenie, czy bot powinien spodziewać się odpowiedzi.
+# === NOWE INSTRUKCJE DLA DWUETAPOWEJ ANALIZY ===
 
-### Krok 1: Analiza Czasu
-- **Aktualna data i godzina to: `{{current_time}}`.** Traktuj tę datę jako absolutnie poprawną, nawet jeśli jest w przyszłości.
+# Analityk Etapu 1: Klasyfikator intencji
+SYSTEM_INSTRUCTION_CLASSIFIER = f"""
+Twoim zadaniem jest analiza ostatniej wiadomości klienta w kontekście całej rozmowy i sklasyfikowanie jego intencji.
+Odpowiedz TYLKO I WYŁĄCZNIE jednym z trzech statusów: `{EXPECTING_REPLY}`, `{CONVERSATION_ENDED}`, `{FOLLOW_UP_LATER}`.
 
-### Krok 2: Analiza Intencji Klienta
-Na podstawie historii czatu i ostatniej wiadomości bota, wybierz JEDEN z trzech poniższych statusów:
+- `{EXPECTING_REPLY}`: Użyj, gdy rozmowa jest w toku, a bot oczekuje odpowiedzi na pytanie.
+- `{CONVERSATION_ENDED}`: Użyj, gdy klient jednoznacznie kończy rozmowę lub odrzuca ofertę.
+- `{FOLLOW_UP_LATER}`: Użyj, gdy klient deklaruje, że odezwie się później (np. "dam znać wieczorem", "muszę porozmawiać z mężem").
+"""
 
-1.  `{EXPECTING_REPLY}`
-    - Użyj, gdy bot zadał bezpośrednie pytanie lub gdy rozmowa jest w toku.
-    - Zwróć TYLKO ten status.
+# Analityk Etapu 2: Estymator czasu
+SYSTEM_INSTRUCTION_ESTIMATOR = f"""
+Jesteś ekspertem w analizie języka naturalnego w celu estymacji czasu.
+- **Aktualna data i godzina to: `{{current_time}}`.**
+- **Kontekst:** Klient właśnie powiedział, że odezwie się później.
 
-2.  `{CONVERSATION_ENDED}`
-    - Użyj, gdy użytkownik jednoznacznie zakończył rozmowę.
-    - Zwróć TYLKO ten status.
+Na podstawie poniższej historii rozmowy, oszacuj, kiedy NAJPRAWDOPODOBNIEJ skontaktuje się ponownie.
+Twoja odpowiedź MUSI być TYLKO I WYŁĄCZNIE datą i godziną w formacie ISO 8601: `YYYY-MM-DDTHH:MM:SS`.
 
-3.  `{FOLLOW_UP_LATER}`
-    - Użyj, gdy użytkownik zadeklarował, że odezwie się później (np. "dam znać wieczorem", "jak syn wróci ze szkoły").
-    - **TWOJE ZADANIE:** Na podstawie `{{current_time}}` i deklaracji klienta, precyzyjnie oszacuj przyszłą datę i godzinę przypomnienia.
-    - **REGUŁY, KTÓRYCH MUSISZ PRZESTRZEGAĆ:**
-        - **ZACHOWAJ ROK:** Zawsze używaj tego samego roku, który jest w `{{current_time}}`.
-        - **BĄDŹ LOGICZNY:** Szacowany czas musi być w przyszłości względem `{{current_time}}`.
-        - **NIE PRZEKRACZAJ 23 GODZIN:** Jeśli szacowany czas jest dalszy niż 23 godziny od `{{current_time}}`, zwróć `{CONVERSATION_ENDED}`.
-    - Twoja odpowiedź MUSI mieć format: `{FOLLOW_UP_LATER}|YYYY-MM-DDTHH:MM:SS`
-    - Przykład (zakładając, że `{{current_time}}` to `2025-09-17T14:00:00`):
-      - Klient: "napiszę wieczorem" -> Oszacowanie: 20:30 tego samego dnia. Zwracasz: `{FOLLOW_UP_LATER}|2025-09-17T20:30:00`
-      - Klient: "odezwę się jutro rano" -> Oszacowanie: 9:00 następnego dnia. Zwracasz: `{FOLLOW_UP_LATER}|2025-09-18T09:00:00`
-      - Klient: "odezwę się za 2 dni" -> To jest > 23h. Zwracasz: `{CONVERSATION_ENDED}`
+**REGUŁY:**
+- Bądź konserwatywny, dodaj 1-2 godziny buforu do swojego oszacowania.
+- Zawsze używaj tego samego roku, co w `{{current_time}}`.
+- Wynik musi być w przyszłości względem `{{current_time}}`.
+- Jeśli klient mówi ogólnie "wieczorem", załóż godzinę 20:30.
+- Jeśli klient mówi "po szkole", załóż godzinę 18:00.
 
-Przeanalizuj poniższą historię i zwróć odpowiedź w wymaganym formacie.
+Przykład (zakładając `{{current_time}}` = `2025-09-18T15:00:00`):
+- Historia: "...klient: dam znać wieczorem." -> Twoja odpowiedź: `2025-09-18T20:30:00`
 """
 
 SYSTEM_INSTRUCTION_GENERAL = """
@@ -329,63 +328,57 @@ def send_message(recipient_id, message_text, page_access_token):
     except requests.exceptions.RequestException as e:
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
-def get_conversation_status(history):
-    """Używa AI do analizy i zwraca status konwersacji oraz opcjonalnie czas."""
-    if not gemini_model:
-        return EXPECTING_REPLY, None
+def classify_conversation(history):
+    """Etap 1: Używa AI do sklasyfikowania intencji klienta."""
+    if not gemini_model: return EXPECTING_REPLY
 
-    # Pobieramy czas systemowy
-    now_with_tz = datetime.now(pytz.timezone(TIMEZONE))
-    now_str = now_with_tz.isoformat()
+    # Formatujemy tylko ostatnie wiadomości, to wystarczy do klasyfikacji
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
     
-    # --- DODAJEMY PRINT TUTAJ ---
-    print(f"--- DEBUG: Czas wysyłany do analityka AI: {now_str} ---")
-    # --- KONIEC DODAWANIA ---
-
-    formatted_instruction = SYSTEM_INSTRUCTION_ANALYSIS.replace("{{current_time}}", now_str)
+    prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
     
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
-    
-    if history and history[-1].role == 'model':
-        chat_history_text_without_last = "\n".join(chat_history_text.splitlines()[:-1])
-        last_bot_reply = history[-1].parts[0].text
-    else:
-        chat_history_text_without_last = chat_history_text
-        last_bot_reply = "[Brak ostatniej odpowiedzi bota]"
-
-    prompt_for_analysis = (
-        f"OTO HISTORIA CZATU:\n---\n{chat_history_text_without_last}\n---\n\n"
-        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{last_bot_reply}\n---"
-    )
-
     full_prompt = [
-        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status w wymaganym formacie.")]),
+        Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_CLASSIFIER)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
-    
     try:
-        analysis_config = GenerationConfig(temperature=0.1)
+        analysis_config = GenerationConfig(temperature=0.0) # Maksymalnie precyzyjna odpowiedź
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        
-        if not response.candidates:
-            logging.warning("Analityk AI nie wygenerował odpowiedzi. Domyślnie włączam przypomnienia.")
-            return EXPECTING_REPLY, None
-
-        raw_status = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        
-        if raw_status.startswith(FOLLOW_UP_LATER):
-            parts = raw_status.split('|')
-            if len(parts) == 2:
-                return FOLLOW_UP_LATER, parts[1]
-        elif raw_status in [EXPECTING_REPLY, CONVERSATION_ENDED]:
-            return raw_status, None
-            
-        return EXPECTING_REPLY, None
-
+        status = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]:
+            return status
+        return EXPECTING_REPLY
     except Exception as e:
-        logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
-        return EXPECTING_REPLY, None
+        logging.error(f"BŁĄD klasyfikatora AI: {e}", exc_info=True)
+        return EXPECTING_REPLY
+
+def estimate_follow_up_time(history):
+    """Etap 2: Używa AI do oszacowania czasu przypomnienia."""
+    if not gemini_model: return None
+        
+    now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+    formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("{{current_time}}", now_str)
+    
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.goparts[0].text}" for msg in history])
+    prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
+    
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
+        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
+    ]
+    try:
+        analysis_config = GenerationConfig(temperature=0.2)
+        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        # Prosta walidacja, czy to wygląda jak data
+        if "T" in time_str and ":" in time_str:
+            return time_str
+        return None
+    except Exception as e:
+        logging.error(f"BŁĄD estymatora czasu AI: {e}", exc_info=True)
+        return None
 
 def get_gemini_response(history, prompt_details, is_follow_up=False):
     if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
@@ -414,29 +407,64 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
 def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
-        if not PAGE_CONFIG: return
+        if not PAGE_CONFIG:
+            logging.error("Brak konfiguracji PAGE_CONFIG. Wątek kończy pracę.")
+            return
+            
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
-        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
-        if event_payload.get("read"):
+
+        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
+            return
+        
+        # Anuluj istniejące przypomnienia, jeśli użytkownik odczytał lub napisał
+        if event_payload.get("read") or event_payload.get("message"):
              cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-             logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
-             return
+
+        # Jeśli to tylko zdarzenie odczytania, zakończ
+        if event_payload.get("read"):
+            logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
+            return
+            
         page_config = PAGE_CONFIG.get(recipient_id)
-        if not page_config: return
+        if not page_config:
+            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGurowanej strony: {recipient_id}")
+            return
+            
         page_token = page_config.get("token")
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text: return
-        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+        if not user_message_text:
+            return
+        
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
+
+        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
+        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
+
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
+
+        logging.info("Wysyłam zapytanie do AI Gemini (rozmowa)...")
         ai_response_raw = get_gemini_response(history, prompt_details)
+        logging.info(f"AI (rozmowa) odpowiedziało: '{ai_response_raw[:100]}...'")
+        
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
-        conversation_status, follow_up_time_iso = get_conversation_status(history)
-        logging.info(f"AI (analiza) zwróciło status: {conversation_status}, Czas: {follow_up_time_iso}")
+        
+        # --- NOWA, DWUETAPOWA LOGIKA ANALIZY ---
+        logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
+        conversation_status = classify_conversation(history)
+        logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
+
+        follow_up_time_iso = None
+        if conversation_status == FOLLOW_UP_LATER:
+            logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
+            follow_up_time_iso = estimate_follow_up_time(history)
+            logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
+        # --- KONIEC NOWEJ LOGIKI ---
+        
         final_message_to_user = ""
+        
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
@@ -446,29 +474,38 @@ def process_event(event_payload):
                 final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
         else:
             final_message_to_user = ai_response_raw
+            
         send_message(sender_id, final_message_to_user, page_token)
+        
         if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
             try:
                 nudge_time = datetime.fromisoformat(follow_up_time_iso).astimezone(pytz.timezone(TIMEZONE))
                 now = datetime.now(pytz.timezone(TIMEZONE))
+
                 if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
                     logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
+                    
                     follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
                     logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
+                    
                     schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
                                    tasks_file=NUDGE_TASKS_FILE,
                                    nudge_time_iso=follow_up_time_iso, 
                                    nudge_message=follow_up_message)
                 else:
                     logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
+
             except ValueError:
                 logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
+
         elif conversation_status == EXPECTING_REPLY:
             logging.info("Status to EXPECTING_REPLY. (Brak akcji przypominającej)")
             pass
         else:
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
+        
         save_history(sender_id, history)
+
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
