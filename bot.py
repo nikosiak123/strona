@@ -273,16 +273,30 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
 
 def check_and_send_nudges():
     logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return
+        
     tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
+    
     for task_id, task in list(tasks.items()):
         if not task.get("status", "").startswith("pending"): continue
-        nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
+        
+        # === KLUCZOWA POPRAWKA JEST TUTAJ ===
+        try:
+            # Wczytujemy datę z pliku jako obiekt "świadomy" strefy czasowej
+            nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
+        except (ValueError, KeyError):
+            logging.error(f"[Scheduler] Błąd formatu daty w zadaniu {task_id}. Usuwam zadanie.")
+            task['status'] = 'failed_date_format'
+            tasks_to_modify[task_id] = task
+            continue
+        # === KONIEC POPRAWKI ===
+            
         if now >= nudge_time:
             is_in_window = NUDGE_WINDOW_START <= now.hour < NUDGE_WINDOW_END
             if is_in_window:
@@ -304,6 +318,7 @@ def check_and_send_nudges():
                 if now.hour >= NUDGE_WINDOW_END: next_day_start += timedelta(days=1)
                 task["nudge_time_iso"] = next_day_start.isoformat()
                 tasks_to_modify[task_id] = task
+
     if tasks_to_modify:
         tasks.update(tasks_to_modify)
         save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
