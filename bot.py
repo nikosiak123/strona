@@ -272,7 +272,7 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid}.")
 
 def check_and_send_nudges():
-    logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    #logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
     
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
@@ -348,9 +348,9 @@ def classify_conversation(history):
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
-    print("\n" + "="*20 + " PROMPT DLA AI (Klasyfikator) " + "="*20)
-    for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    print("="*56 + "\n")
+    #print("\n" + "="*20 + " PROMPT DLA AI (Klasyfikator) " + "="*20)
+    #for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    #print("="*56 + "\n")
     try:
         analysis_config = GenerationConfig(temperature=0.0)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
@@ -381,9 +381,9 @@ def estimate_follow_up_time(history):
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
     
-    print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
-    for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    print("="*62 + "\n")
+    #print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
+    #for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    #print("="*62 + "\n")
     
     try:
         analysis_config = GenerationConfig(temperature=0.2)
@@ -412,9 +412,9 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
             prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
         full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
                        Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
-    print("\n" + "="*20 + " PROMPT DLA AI (Rozmowa/Przypomnienie) " + "="*20)
-    for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    print("="*66 + "\n")
+    #print("\n" + "="*20 + " PROMPT DLA AI (Rozmowa/Przypomnienie) " + "="*20)
+    #for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    #print("="*66 + "\n")
     try:
         response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
