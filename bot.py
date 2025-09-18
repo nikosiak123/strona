@@ -360,7 +360,10 @@ def estimate_follow_up_time(history):
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("{{current_time}}", now_str)
     
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.goparts[0].text}" for msg in history])
+    # === POPRAWKA LITERÓWKI JEST TUTAJ (goparts -> parts) ===
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
+    # === KONIEC POPRAWKI ===
+    
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
     
     full_prompt = [
@@ -371,8 +374,10 @@ def estimate_follow_up_time(history):
     try:
         analysis_config = GenerationConfig(temperature=0.2)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        
+        if not response.candidates: return None
+        
         time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        # Prosta walidacja, czy to wygląda jak data
         if "T" in time_str and ":" in time_str:
             return time_str
         return None
