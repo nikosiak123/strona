@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Wersja: OSTATECZNA (Vertex AI + Czas Systemowy + Wzmocniona Analiza AI)
+# Wersja: OSTATECZNA (AI + Airtable + Dwuetapowa Analiza + Spersonalizowane Przypomnienia)
 
 from flask import Flask, request, Response
 import threading
@@ -63,11 +63,9 @@ else:
 
 # === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ ===
 NUDGE_TASKS_FILE = "nudge_tasks.json"
-FOLLOW_UP_WINDOW_HOURS = 23 # Maksymalny czas w godzinach, na który ustawiamy przypomnienie (nieco poniżej 24h)
+FOLLOW_UP_WINDOW_HOURS = 23
 TIMEZONE = "Europe/Warsaw"
 NUDGE_WINDOW_START, NUDGE_WINDOW_END = 6, 23
-NUDGE_EMOJI = "👍"
-FINAL_NUDGE_TEXT = "Dzień dobry, czy są Państwo nadal zainteresowani współpracą?"
 
 # --- Znaczniki i Ustawienia Modelu ---
 AGREEMENT_MARKER = "[ZAPISZ_NA_LEKCJE]"
@@ -102,9 +100,7 @@ except Exception as e:
 # =====================================================================
 # === INSTRUKCJE SYSTEMOWE DLA AI =====================================
 # =====================================================================
-# === NOWE INSTRUKCJE DLA DWUETAPOWEJ ANALIZY ===
 
-# Analityk Etapu 1: Klasyfikator intencji
 SYSTEM_INSTRUCTION_CLASSIFIER = f"""
 Twoim zadaniem jest analiza ostatniej wiadomości klienta w kontekście całej rozmowy i sklasyfikowanie jego intencji.
 Odpowiedz TYLKO I WYŁĄCZNIE jednym z trzech statusów: `{EXPECTING_REPLY}`, `{CONVERSATION_ENDED}`, `{FOLLOW_UP_LATER}`.
@@ -114,7 +110,6 @@ Odpowiedz TYLKO I WYŁĄCZNIE jednym z trzech statusów: `{EXPECTING_REPLY}`, `{
 - `{FOLLOW_UP_LATER}`: Użyj, gdy klient deklaruje, że odezwie się później (np. "dam znać wieczorem", "muszę porozmawiać z mężem").
 """
 
-# Analityk Etapu 2: Estymator czasu
 SYSTEM_INSTRUCTION_ESTIMATOR = f"""
 Jesteś ekspertem w analizie języka naturalnego w celu estymacji czasu.
 - **Aktualna data i godzina to: `{{current_time}}`.**
@@ -329,77 +324,54 @@ def send_message(recipient_id, message_text, page_access_token):
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
 def classify_conversation(history):
-    """Etap 1: Używa AI do sklasyfikowania intencji klienta."""
     if not gemini_model: return EXPECTING_REPLY
-
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
-    
     full_prompt = [
         Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_CLASSIFIER)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
-
-    # === DODANO PRINT DLA DEBUGOWANIA ===
     print("\n" + "="*20 + " PROMPT DLA AI (Klasyfikator) " + "="*20)
-    for msg in full_prompt:
-        print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
     print("="*56 + "\n")
-    # === KONIEC DODAWANIA PRINT ===
-
     try:
         analysis_config = GenerationConfig(temperature=0.0)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
         status = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]:
-            return status
+        if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]: return status
         return EXPECTING_REPLY
     except Exception as e:
         logging.error(f"BŁĄD klasyfikatora AI: {e}", exc_info=True)
         return EXPECTING_REPLY
 
 def estimate_follow_up_time(history):
-    """Etap 2: Używa AI do oszacowania czasu przypomnienia."""
     if not gemini_model: return None
-        
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("{{current_time}}", now_str)
-    
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
-    
     full_prompt = [
         Content(role="user", parts=[Part.from_text(formatted_instruction)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
-
-    # === DODANO PRINT DLA DEBUGOWANIA ===
     print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
-    for msg in full_prompt:
-        print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
     print("="*62 + "\n")
-    # === KONIEC DODAWANIA PRINT ===
-
     try:
         analysis_config = GenerationConfig(temperature=0.2)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        
         if not response.candidates: return None
-        
         time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if "T" in time_str and ":" in time_str:
-            return time_str
+        if "T" in time_str and ":" in time_str: return time_str
         return None
     except Exception as e:
         logging.error(f"BŁĄD estymatora czasu AI: {e}", exc_info=True)
         return None
 
 def get_gemini_response(history, prompt_details, is_follow_up=False):
-    """Główna funkcja konwersacyjna. Może też generować wiadomość przypominającą."""
     if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
-    
     if is_follow_up:
         system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, spersonalizowanej wiadomości przypominającej. "
                               "Na podstawie historii rozmowy, nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
@@ -411,14 +383,9 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
             prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
         full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
                        Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
-    
-    # === DODANO PRINT DLA DEBUGOWANIA ===
     print("\n" + "="*20 + " PROMPT DLA AI (Rozmowa/Przypomnienie) " + "="*20)
-    for msg in full_prompt:
-        print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
     print("="*66 + "\n")
-    # === KONIEC DODAWANIA PRINT ===
-
     try:
         response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
@@ -433,64 +400,37 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
 def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
-        if not PAGE_CONFIG:
-            logging.error("Brak konfiguracji PAGE_CONFIG. Wątek kończy pracę.")
-            return
-            
+        if not PAGE_CONFIG: return
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
-
-        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"):
-            return
-        
-        # Anuluj istniejące przypomnienia, jeśli użytkownik odczytał lub napisał
-        if event_payload.get("read") or event_payload.get("message"):
-             cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-
-        # Jeśli to tylko zdarzenie odczytania, zakończ
+        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
         if event_payload.get("read"):
-            logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
-            return
-            
+             cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+             logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
+             return
         page_config = PAGE_CONFIG.get(recipient_id)
-        if not page_config:
-            logging.warning(f"Otrzymano wiadomość dla NIESKONFIGurowanej strony: {recipient_id}")
-            return
-            
+        if not page_config: return
         page_token = page_config.get("token")
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text:
-            return
-        
+        if not user_message_text: return
+        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
-
-        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
-        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
-
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
-
-        logging.info("Wysyłam zapytanie do AI Gemini (rozmowa)...")
         ai_response_raw = get_gemini_response(history, prompt_details)
-        logging.info(f"AI (rozmowa) odpowiedziało: '{ai_response_raw[:100]}...'")
-        
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
-        # --- NOWA, DWUETAPOWA LOGIKA ANALIZY ---
         logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
         conversation_status = classify_conversation(history)
         logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
-
         follow_up_time_iso = None
         if conversation_status == FOLLOW_UP_LATER:
             logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
             follow_up_time_iso = estimate_follow_up_time(history)
             logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
-        # --- KONIEC NOWEJ LOGIKI ---
         
         final_message_to_user = ""
-        
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
@@ -507,23 +447,18 @@ def process_event(event_payload):
             try:
                 nudge_time = datetime.fromisoformat(follow_up_time_iso).astimezone(pytz.timezone(TIMEZONE))
                 now = datetime.now(pytz.timezone(TIMEZONE))
-
                 if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
                     logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
-                    
                     follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
                     logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
-                    
                     schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
                                    tasks_file=NUDGE_TASKS_FILE,
                                    nudge_time_iso=follow_up_time_iso, 
                                    nudge_message=follow_up_message)
                 else:
                     logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
-
             except ValueError:
                 logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
-
         elif conversation_status == EXPECTING_REPLY:
             logging.info("Status to EXPECTING_REPLY. (Brak akcji przypominającej)")
             pass
@@ -531,7 +466,6 @@ def process_event(event_payload):
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
         
         save_history(sender_id, history)
-
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
@@ -562,10 +496,12 @@ if __name__ == '__main__':
     logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
     logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
     ensure_dir(HISTORY_DIR)
+    
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
     scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=20)
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
+    
     port = int(os.environ.get("PORT", 8080))
     logging.info(f"Uruchamianie serwera na porcie {port}...")
     try:
