@@ -430,34 +430,43 @@ def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
         if not PAGE_CONFIG: return
+            
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
+        
+        # Jeśli to tylko zdarzenie odczytania, nie robimy nic i kończymy
         if event_payload.get("read"):
-             cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-             logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
-             return
+            logging.info(f"Użytkownik {sender_id} odczytał wiadomość. (Brak akcji)")
+            return
+
+        # === KLUCZOWA ZMIANA LOGIKI JEST TUTAJ ===
+        # Anulujemy przypomnienia TYLKO wtedy, gdy przychodzi NOWA WIADOMOŚĆ od użytkownika
+        user_message_text = event_payload.get("message", {}).get("text", "").strip()
+        if not user_message_text:
+            return # Jeśli to nie jest wiadomość tekstowa (np. załącznik), również kończymy
+        
+        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+        # === KONIEC ZMIANY ===
+            
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
+            
         page_token = page_config.get("token")
-        user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text: return
-        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
+
+        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
+        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
+
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
+
         ai_response_raw = get_gemini_response(history, prompt_details)
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
-        logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
-        conversation_status = classify_conversation(history)
-        logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
-        follow_up_time_iso = None
-        if conversation_status == FOLLOW_UP_LATER:
-            logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
-            follow_up_time_iso = estimate_follow_up_time(history)
-            logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
+        conversation_status, follow_up_time_iso = get_conversation_status(history)
+        logging.info(f"AI (analiza) zwróciło status: {conversation_status}, Czas: {follow_up_time_iso}")
         
         final_message_to_user = ""
         if AGREEMENT_MARKER in ai_response_raw:
@@ -474,31 +483,18 @@ def process_event(event_payload):
         
         if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
             try:
-                # --- OSTATECZNA POPRAWKA JEST TUTAJ (WERSJA 1) ---
-                # 1. Stwórz obiekt "naiwny"
-                nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
-                
-                # 2. "Uświadom" go, dodając naszą strefę czasową
-                local_tz = pytz.timezone(TIMEZONE)
-                nudge_time = local_tz.localize(nudge_time_naive)
-                # --- KONIEC POPRAWKI ---
-
+                nudge_time = datetime.fromisoformat(follow_up_time_iso).astimezone(pytz.timezone(TIMEZONE))
                 now = datetime.now(pytz.timezone(TIMEZONE))
-                
-                if now < nudge_time < (now + timedelta(minutes=5)):
+                if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
                     logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
-                    
                     follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
                     logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
-                    
-                    # Zapisujemy datę z pełną informacją o strefie czasowej
                     schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
                                    tasks_file=NUDGE_TASKS_FILE,
-                                   nudge_time_iso=nudge_time.isoformat(), 
+                                   nudge_time_iso=follow_up_time_iso, 
                                    nudge_message=follow_up_message)
                 else:
                     logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
-
             except ValueError:
                 logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
         elif conversation_status == EXPECTING_REPLY:
@@ -508,6 +504,7 @@ def process_event(event_payload):
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
         
         save_history(sender_id, history)
+
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
