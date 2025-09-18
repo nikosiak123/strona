@@ -110,9 +110,9 @@ Odpowiedz TYLKO I WYŁĄCZNIE jednym z trzech statusów: `{EXPECTING_REPLY}`, `{
 - `{FOLLOW_UP_LATER}`: Użyj, gdy klient deklaruje, że odezwie się później (np. "dam znać wieczorem", "muszę porozmawiać z mężem").
 """
 
-SYSTEM_INSTRUCTION_ESTIMATOR = f"""
+SYSTEM_INSTRUCTION_ESTIMATOR = """
 Jesteś ekspertem w analizie języka naturalnego w celu estymacji czasu.
-- **Aktualna data i godzina to: `{{current_time}}`.**
+- **Aktualna data i godzina to: `__CURRENT_TIME__`.**
 - **Kontekst:** Klient właśnie powiedział, że odezwie się później.
 
 Na podstawie poniższej historii rozmowy, oszacuj, kiedy NAJPRAWDOPODOBNIEJ skontaktuje się ponownie.
@@ -120,12 +120,12 @@ Twoja odpowiedź MUSI być TYLKO I WYŁĄCZNIE datą i godziną w formacie ISO 8
 
 **REGUŁY:**
 - Bądź konserwatywny, dodaj 1-2 godziny buforu do swojego oszacowania.
-- Zawsze używaj tego samego roku, co w `{{current_time}}`.
-- Wynik musi być w przyszłości względem `{{current_time}}`.
+- Zawsze używaj tego samego roku, co w `__CURRENT_TIME__`.
+- Wynik musi być w przyszłości względem `__CURRENT_TIME__`.
 - Jeśli klient mówi ogólnie "wieczorem", załóż godzinę 20:30.
 - Jeśli klient mówi "po szkole", załóż godzinę 18:00.
 
-Przykład (zakładając `{{current_time}}` = `2025-09-18T15:00:00`):
+Przykład (zakładając `__CURRENT_TIME__` = `2025-09-18T15:00:00`):
 - Historia: "...klient: dam znać wieczorem." -> Twoja odpowiedź: `2025-09-18T20:30:00`
 """
 
@@ -346,25 +346,38 @@ def classify_conversation(history):
         return EXPECTING_REPLY
 
 def estimate_follow_up_time(history):
+    """Etap 2: Używa AI do oszacowania czasu przypomnienia."""
     if not gemini_model: return None
+        
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-    formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("{{current_time}}", now_str)
+    
+    # === KLUCZOWA POPRAWKA JEST TUTAJ ===
+    # Używamy prostej i niezawodnej metody .replace() do wstawienia aktualnego czasu
+    formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
+    # === KONIEC POPRAWKI ===
+    
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
+    
     full_prompt = [
         Content(role="user", parts=[Part.from_text(formatted_instruction)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
+    
     print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
     for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
     print("="*62 + "\n")
+    
     try:
         analysis_config = GenerationConfig(temperature=0.2)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        
         if not response.candidates: return None
+        
         time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if "T" in time_str and ":" in time_str: return time_str
+        if "T" in time_str and ":" in time_str:
+            return time_str
         return None
     except Exception as e:
         logging.error(f"BŁĄD estymatora czasu AI: {e}", exc_info=True)
