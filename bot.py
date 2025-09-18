@@ -286,16 +286,17 @@ def check_and_send_nudges():
     for task_id, task in list(tasks.items()):
         if not task.get("status", "").startswith("pending"): continue
         
-        # === KLUCZOWA POPRAWKA JEST TUTAJ ===
         try:
-            # Wczytujemy datę z pliku jako obiekt "świadomy" strefy czasowej
+            # --- OSTATECZNA POPRAWKA JEST TUTAJ (WERSJA 2) ---
+            # Wczytujemy datę z pliku, która teraz zawsze ma strefę czasową
             nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
+            # --- KONIEC POPRAWKI ---
+
         except (ValueError, KeyError):
             logging.error(f"[Scheduler] Błąd formatu daty w zadaniu {task_id}. Usuwam zadanie.")
             task['status'] = 'failed_date_format'
             tasks_to_modify[task_id] = task
             continue
-        # === KONIEC POPRAWKI ===
             
         if now >= nudge_time:
             is_in_window = NUDGE_WINDOW_START <= now.hour < NUDGE_WINDOW_END
@@ -473,18 +474,31 @@ def process_event(event_payload):
         
         if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
             try:
-                nudge_time = datetime.fromisoformat(follow_up_time_iso).astimezone(pytz.timezone(TIMEZONE))
+                # --- OSTATECZNA POPRAWKA JEST TUTAJ (WERSJA 1) ---
+                # 1. Stwórz obiekt "naiwny"
+                nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
+                
+                # 2. "Uświadom" go, dodając naszą strefę czasową
+                local_tz = pytz.timezone(TIMEZONE)
+                nudge_time = local_tz.localize(nudge_time_naive)
+                # --- KONIEC POPRAWKI ---
+
                 now = datetime.now(pytz.timezone(TIMEZONE))
+                
                 if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
                     logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
+                    
                     follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
                     logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
+                    
+                    # Zapisujemy datę z pełną informacją o strefie czasowej
                     schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
                                    tasks_file=NUDGE_TASKS_FILE,
-                                   nudge_time_iso=follow_up_time_iso, 
+                                   nudge_time_iso=nudge_time.isoformat(), 
                                    nudge_message=follow_up_message)
                 else:
                     logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
+
             except ValueError:
                 logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
         elif conversation_status == EXPECTING_REPLY:
