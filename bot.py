@@ -166,69 +166,6 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
-
-def get_conversation_status(history):
-    """Używa AI do analizy i zwraca status konwersacji oraz opcjonalnie czas."""
-    if not gemini_model:
-        return EXPECTING_REPLY, None
-
-    # Pobieramy czas systemowy
-    now_with_tz = datetime.now(pytz.timezone(TIMEZONE))
-    now_str = now_with_tz.isoformat()
-    
-    print(f"--- DEBUG: Czas wysyłany do analityka AI: {now_str} ---")
-
-    # Tworzymy finalną, wypełnioną wersję instrukcji
-    formatted_instruction = SYSTEM_INSTRUCTION_ANALYSIS.replace("{{current_time}}", now_str)
-    
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
-    
-    if history and history[-1].role == 'model':
-        chat_history_text_without_last = "\n".join(chat_history_text.splitlines()[:-1])
-        last_bot_reply = history[-1].parts[0].text
-    else:
-        chat_history_text_without_last = chat_history_text
-        last_bot_reply = "[Brak ostatniej odpowiedzi bota]"
-
-    prompt_for_analysis = (
-        f"OTO HISTORIA CZATU:\n---\n{chat_history_text_without_last}\n---\n\n"
-        f"OTO OSTATNIA WIADOMOŚĆ BOTA:\n---\n{last_bot_reply}\n---"
-    )
-
-    full_prompt = [
-        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Przeanalizuję konwersację i zwrócę status w wymaganym formacie.")]),
-        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
-    ]
-    
-    # print("\n" + "="*20 + " PROMPT DLA AI (Analityk Statusu) " + "="*20)
-    # for msg in full_prompt:
-    #     print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    # print("="*60 + "\n")
-    
-    try:
-        analysis_config = GenerationConfig(temperature=0.1)
-        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        
-        if not response.candidates:
-            logging.warning("Analityk AI nie wygenerował odpowiedzi. Domyślnie włączam przypomnienia.")
-            return EXPECTING_REPLY, None
-
-        raw_status = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        
-        if raw_status.startswith(FOLLOW_UP_LATER):
-            parts = raw_status.split('|')
-            if len(parts) == 2:
-                return FOLLOW_UP_LATER, parts[1]
-        elif raw_status in [EXPECTING_REPLY, CONVERSATION_ENDED]:
-            return raw_status, None
-            
-        return EXPECTING_REPLY, None
-
-    except Exception as e:
-        logging.error(f"BŁĄD analityka AI: {e}", exc_info=True)
-        return EXPECTING_REPLY, None
-
 def load_config():
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
@@ -335,32 +272,23 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid}.")
 
 def check_and_send_nudges():
-    #logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
-    
+    # logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return
-        
     tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
-    
     for task_id, task in list(tasks.items()):
         if not task.get("status", "").startswith("pending"): continue
-        
         try:
-            # --- OSTATECZNA POPRAWKA JEST TUTAJ (WERSJA 2) ---
-            # Wczytujemy datę z pliku, która teraz zawsze ma strefę czasową
             nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
-            # --- KONIEC POPRAWKI ---
-
         except (ValueError, KeyError):
             logging.error(f"[Scheduler] Błąd formatu daty w zadaniu {task_id}. Usuwam zadanie.")
             task['status'] = 'failed_date_format'
             tasks_to_modify[task_id] = task
             continue
-            
         if now >= nudge_time:
             is_in_window = NUDGE_WINDOW_START <= now.hour < NUDGE_WINDOW_END
             if is_in_window:
@@ -382,7 +310,6 @@ def check_and_send_nudges():
                 if now.hour >= NUDGE_WINDOW_END: next_day_start += timedelta(days=1)
                 task["nudge_time_iso"] = next_day_start.isoformat()
                 tasks_to_modify[task_id] = task
-
     if tasks_to_modify:
         tasks.update(tasks_to_modify)
         save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
@@ -411,9 +338,9 @@ def classify_conversation(history):
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
-    #print("\n" + "="*20 + " PROMPT DLA AI (Klasyfikator) " + "="*20)
-    #for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    #print("="*56 + "\n")
+    # print("\n" + "="*20 + " PROMPT DLA AI (Klasyfikator) " + "="*20)
+    # for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    # print("="*56 + "\n")
     try:
         analysis_config = GenerationConfig(temperature=0.0)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
@@ -425,38 +352,25 @@ def classify_conversation(history):
         return EXPECTING_REPLY
 
 def estimate_follow_up_time(history):
-    """Etap 2: Używa AI do oszacowania czasu przypomnienia."""
     if not gemini_model: return None
-        
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-    
-    # === KLUCZOWA POPRAWKA JEST TUTAJ ===
-    # Używamy prostej i niezawodnej metody .replace() do wstawienia aktualnego czasu
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
-    # === KONIEC POPRAWKI ===
-    
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
-    
     full_prompt = [
         Content(role="user", parts=[Part.from_text(formatted_instruction)]),
         Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
         Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
     ]
-    
-    #print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
-    #for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    #print("="*62 + "\n")
-    
+    # print("\n" + "="*20 + " PROMPT DLA AI (Estymator Czasu) " + "="*20)
+    # for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    # print("="*62 + "\n")
     try:
         analysis_config = GenerationConfig(temperature=0.2)
         response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        
         if not response.candidates: return None
-        
         time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if "T" in time_str and ":" in time_str:
-            return time_str
+        if "T" in time_str and ":" in time_str: return time_str
         return None
     except Exception as e:
         logging.error(f"BŁĄD estymatora czasu AI: {e}", exc_info=True)
@@ -475,13 +389,17 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
             prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
         full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
                        Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
-    #print("\n" + "="*20 + " PROMPT DLA AI (Rozmowa/Przypomnienie) " + "="*20)
-    #for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
-    #print("="*66 + "\n")
+    # print("\n" + "="*20 + " PROMPT DLA AI (Rozmowa/Przypomnienie) " + "="*20)
+    # for msg in full_prompt: print(f"--- ROLE: {msg.role} ---\n{msg.parts[0].text}\n" + "-"*60)
+    # print("="*66 + "\n")
     try:
         response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
-        return "".join(part.text for part in response.candidates[0].content.parts).strip()
+        generated_text = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        if is_follow_up and not generated_text:
+            logging.warning("AI (przypomnienie) zwróciło pusty tekst. Używam domyślnej wiadomości.")
+            return "Dzień dobry, chciałem tylko zapytać, czy udało się Państwu podjąć decyzję w sprawie lekcji?"
+        return generated_text
     except Exception as e:
         logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
         return "Przepraszam, wystąpił nieoczekiwany błąd."
@@ -493,43 +411,34 @@ def process_event(event_payload):
     try:
         logging.info("Wątek 'process_event' wystartował.")
         if not PAGE_CONFIG: return
-            
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
-        
-        # Jeśli to tylko zdarzenie odczytania, nie robimy nic i kończymy
         if event_payload.get("read"):
-            logging.info(f"Użytkownik {sender_id} odczytał wiadomość. (Brak akcji)")
-            return
-
-        # === KLUCZOWA ZMIANA LOGIKI JEST TUTAJ ===
-        # Anulujemy przypomnienia TYLKO wtedy, gdy przychodzi NOWA WIADOMOŚĆ od użytkownika
-        user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text:
-            return # Jeśli to nie jest wiadomość tekstowa (np. załącznik), również kończymy
-        
-        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-        # === KONIEC ZMIANY ===
-            
+             cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+             logging.info(f"Użytkownik {sender_id} odczytał wiadomość. Anulowano przypomnienia.")
+             return
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
-            
         page_token = page_config.get("token")
+        user_message_text = event_payload.get("message", {}).get("text", "").strip()
+        if not user_message_text: return
+        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
-
-        logging.info(f"--- Przetwarzanie dla strony '{page_name}' | Użytkownik {sender_id} ---")
-        logging.info(f"Odebrano wiadomość: '{user_message_text}'")
-
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
-
         ai_response_raw = get_gemini_response(history, prompt_details)
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
-        conversation_status, follow_up_time_iso = get_conversation_status(history)
-        logging.info(f"AI (analiza) zwróciło status: {conversation_status}, Czas: {follow_up_time_iso}")
+        logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
+        conversation_status = classify_conversation(history)
+        logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
+        follow_up_time_iso = None
+        if conversation_status == FOLLOW_UP_LATER:
+            logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
+            follow_up_time_iso = estimate_follow_up_time(history)
+            logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
         
         final_message_to_user = ""
         if AGREEMENT_MARKER in ai_response_raw:
@@ -554,7 +463,7 @@ def process_event(event_payload):
                     logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
                     schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
                                    tasks_file=NUDGE_TASKS_FILE,
-                                   nudge_time_iso=follow_up_time_iso, 
+                                   nudge_time_iso=nudge_time.isoformat(), 
                                    nudge_message=follow_up_message)
                 else:
                     logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
@@ -567,7 +476,6 @@ def process_event(event_payload):
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
         
         save_history(sender_id, history)
-
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
 
