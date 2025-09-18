@@ -485,7 +485,7 @@ def process_event(event_payload):
 
                 now = datetime.now(pytz.timezone(TIMEZONE))
                 
-                if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
+                if now < nudge_time < (now + timedelta(minutes=5)):
                     logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
                     
                     follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
