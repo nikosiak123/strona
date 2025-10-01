@@ -191,7 +191,7 @@ def get_user_profile(psid, page_access_token):
         return None, None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
-    """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go, dodając zdjęcie."""
+    """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go, zapisując dane do nowych kolumn."""
     if not clients_table_obj:
         logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
         return None
@@ -203,22 +203,20 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
             return psid
         
         logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
-        # Odbieramy teraz trzy wartości, w tym link do zdjęcia
         first_name, last_name, profile_pic_url = get_user_profile(psid, page_access_token)
         
+        # === ZMIANA NAZW PÓL JEST TUTAJ ===
         new_client_data = {
             "ClientID": psid,
             "Źródło": "Messenger Bot"
         }
         if first_name:
-            new_client_data["Imię"] = first_name
+            new_client_data["ImięKlienta"] = first_name # Zmieniono z "Imię"
         if last_name:
-            new_client_data["Nazwisko"] = last_name
-        
-        # === NOWA LOGIKA DLA ZDJĘCIA ===
+            new_client_data["NazwiskoKlienta"] = last_name # Zmieniono z "Nazwisko"
         if profile_pic_url:
             new_client_data["Zdjęcie"] = profile_pic_url
-        # === KONIEC NOWEJ LOGIKI ===
+        # === KONIEC ZMIANY ===
             
         clients_table_obj.create(new_client_data)
         logging.info(f"Pomyślnie utworzono nowego klienta w Airtable dla PSID {psid}.")
