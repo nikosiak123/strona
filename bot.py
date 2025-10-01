@@ -175,31 +175,57 @@ def load_config():
         return {}
 
 def get_user_profile(psid, page_access_token):
+    """Pobiera imię, nazwisko i zdjęcie profilowe użytkownika z Facebook Graph API."""
     try:
-        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name&access_token={page_access_token}"
+        # Dodajemy 'profile_pic' do listy pól, o które prosimy
+        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name,profile_pic&access_token={page_access_token}"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
-        return data.get("first_name"), data.get("last_name")
-    except Exception as e:
+        
+        # Zwracamy teraz trzy wartości
+        return data.get("first_name"), data.get("last_name"), data.get("profile_pic")
+        
+    except requests.exceptions.RequestException as e:
         logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
-        return None, None
+        return None, None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
+    """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go, dodając zdjęcie."""
     if not clients_table_obj:
-        logging.error("Airtable nie jest skonfigurowane.")
+        logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
         return None
+
     try:
         existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
-        if existing_client: return psid
-        first_name, last_name = get_user_profile(psid, page_access_token)
-        new_client_data = {"ClientID": psid, "Źródło": "Messenger Bot"}
-        if first_name: new_client_data["Imię"] = first_name
-        if last_name: new_client_data["Nazwisko"] = last_name
+        if existing_client:
+            logging.info(f"Klient o PSID {psid} już istnieje w Airtable.")
+            return psid
+        
+        logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
+        # Odbieramy teraz trzy wartości, w tym link do zdjęcia
+        first_name, last_name, profile_pic_url = get_user_profile(psid, page_access_token)
+        
+        new_client_data = {
+            "ClientID": psid,
+            "Źródło": "Messenger Bot"
+        }
+        if first_name:
+            new_client_data["Imię"] = first_name
+        if last_name:
+            new_client_data["Nazwisko"] = last_name
+        
+        # === NOWA LOGIKA DLA ZDJĘCIA ===
+        if profile_pic_url:
+            new_client_data["Zdjęcie"] = profile_pic_url
+        # === KONIEC NOWEJ LOGIKI ===
+            
         clients_table_obj.create(new_client_data)
+        logging.info(f"Pomyślnie utworzono nowego klienta w Airtable dla PSID {psid}.")
         return psid
+        
     except Exception as e:
-        logging.error(f"Błąd operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
+        logging.error(f"Wystąpił błąd podczas operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
         return None
 
 def ensure_dir(directory):
