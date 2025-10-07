@@ -13,8 +13,8 @@ from selenium.webdriver.common.keys import Keys
 
 # --- KONFIGURACJA ---
 # Zmień te ścieżki, aby pasowały do Twojego systemu
-PATH_DO_GOOGLE_CHROME = "/opt/google/chrome/chrome"
-PATH_DO_RECZNEGO_CHROMEDRIVER = "/home/nikodnaj3/chromedriver-linux64/chromedriver" # Wpisz swoją ścieżkę
+PATH_DO_GOOGLE_CHROME = "/usr/bin/google-chrome"
+PATH_DO_RECZNEGO_CHROMEDRIVER = "/usr/local/bin/chromedriver"
 COOKIES_FILE = "cookies.pkl"
 PROCESSED_POSTS_FILE = "processed_posts_db.pkl"
 
