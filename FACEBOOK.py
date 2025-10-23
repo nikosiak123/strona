@@ -48,7 +48,7 @@ AIRTABLE_TABLE_NAME = "Statystyki"
 COOKIES_FILE = "cookies.pkl"
 PROCESSED_POSTS_FILE = "processed_posts_db.pkl"
 AI_LOG_FILE = "ai_analysis_log.txt"
-ERROR_SCREENSHOTS_DIR = "error_screenshots"
+ERROR_SCREENSHOTS_DIR = "debug_logs"
 AUTHOR_FILTER_KEYWORDS = ['spotted', 'ogloszenia', 'ogłoszenia', 'korepetycje', 'nauka', 'szkoła', 'centrum', 'instytut', 'grupa', 'group']
 
 # --- ZAKTUALIZOWANE LISTY KOMENTARZY ---
@@ -58,7 +58,7 @@ COMMENT_TEXTS_STANDARD = [
     "Polecam @Zakręcone Korepetycje. Cena super, a do tego bardzo dobra jakość zajęć. Oceny wyższe, niż przed lekcjami, o 2-3 stopnie  (:",
 ]
 COMMENT_TEXTS_HIGH_SCHOOL = [
-    "Napiszcie do @Zakręcone Korepetycje, mój syn napisał podstawę z matmy na 94%. Zajęcia prowadzone w bardzo miłej atmosferze. Serdecznie polecam.",
+    "Bardzo polecam @Zakręcone Korepetycje, mój syn napisał podstawę z matmy na 94%. Zajęcia prowadzone w bardzo miłej atmosferze.",
 ]
 # --- Koniec stałych ---
 
@@ -77,6 +77,114 @@ SAFETY_SETTINGS = [
 ]
 
 # --- NOWE FUNKCJE POMOCNICZE ---
+def log_error_state(driver, location_name="unknown_error"):
+    """Zapisuje zrzut ekranu (PNG) i pełny kod źródłowy (HTML) w przypadku błędu."""
+    try:
+        if not os.path.exists(ERROR_SCREENSHOTS_DIR):
+            os.makedirs(ERROR_SCREENSHOTS_DIR)
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_filename = os.path.join(ERROR_SCREENSHOTS_DIR, f"ERROR_{location_name}_{timestamp}")
+        
+        # 1. Zapis zrzutu ekranu (PNG)
+        if driver and hasattr(driver, 'save_screenshot'):
+             driver.save_screenshot(f"{base_filename}.png")
+             print(f"BŁĄD ZAPISANO: Zrzut ekranu zapisany w: {base_filename}.png")
+        
+        # 2. Zapis pełnego kodu źródłowego (HTML)
+        if driver and hasattr(driver, 'page_source'):
+            page_html = driver.page_source
+            with open(f"{base_filename}.html", "w", encoding="utf-8") as f:
+                f.write(page_html)
+            print(f"BŁĄD ZAPISANO: Kod źródłowy HTML zapisany w: {base_filename}.html")
+        else:
+             print("BŁĄD: Sterownik niedostępny, aby zapisać pełny stan strony.")
+
+    except Exception as e:
+        logging.error(f"Krytyczny błąd podczas próby zapisu stanu błędu: {e}")
+
+
+def human_typing_with_tagging(driver, element, text, tag_name="Zakręcone Korepetycje"):
+    """
+    Symuluje pisanie tekstu, z inteligentnym tagowaniem.
+    Poprawnie identyfikuje pełną nazwę do tagowania i kontynuuje od właściwego miejsca.
+    """
+    wait = WebDriverWait(driver, 5)
+
+    if '@' in text:
+        # 1. Dzielimy tekst na część przed i po znaku '@'
+        parts = text.split('@', 1)
+        before_tag = parts[0]
+        after_tag_full = parts[1]
+
+        # 2. Zakładamy, że nazwa strony to wszystko do następnego znaku interpunkcyjnego lub końca zdania.
+        # W Twoim przypadku, "Zakręcone Korepetycje" jest nazwą do wpisania.
+        # Skrypt musi wiedzieć, kiedy przestać wpisywać i kliknąć.
+        
+        # Nazwa, którą wpisujemy, aby wywołać sugestię
+        page_name_to_type = "Zakręcone Korepetycje"
+        
+        # Znajdź pełną nazwę użytą w tekście komentarza (może być inna niż `tag_name`)
+        # np. jeśli w tekście jest "Polecam @ZakręconeKorepetycje!", to chcemy zidentyfikować "ZakręconeKorepetycje"
+        # Na razie zakładamy, że jest to zawsze "Zakręcone Korepetycje"
+        
+        # Tekst, który ma być wpisany PO tagu
+        # Znajdujemy, gdzie w oryginalnym tekście kończy się nazwa strony i bierzemy resztę
+        try:
+            # Wyszukajmy nazwę strony w tekście po '@', ignorując wielkość liter
+            match = re.search(re.escape(page_name_to_type), after_tag_full, re.IGNORECASE)
+            if match:
+                # Bierzemy tekst, który znajduje się po znalezionej nazwie
+                text_after_tag = after_tag_full[match.end():]
+            else:
+                # Jeśli z jakiegoś powodu nie znajdziemy, bierzemy wszystko po pierwszym słowie
+                text_after_tag = " ".join(after_tag_full.split(' ')[1:])
+
+        except IndexError:
+             text_after_tag = ""
+
+
+        # --- Sekwencja Pisania ---
+        
+        # Wpisz tekst przed tagiem
+        for char in before_tag:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+        
+        # Wpisz znak '@' i zacznij pisać nazwę
+        element.send_keys('@')
+        random_sleep(0.5, 1)
+        
+        for char in page_name_to_type:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+        
+        random_sleep(1.5, 2.5)
+
+        # Znajdź i kliknij sugestię
+        try:
+            # Używamy `tag_name` do znalezienia sugestii, bo ona może być inna
+            # np. "Zakręcone Korepetycje - Matematyka"
+            suggestion_xpath = f"//li[@role='option']//span[contains(text(), '{tag_name}')]"
+            suggestion = wait.until(EC.element_to_be_clickable((By.XPATH, suggestion_xpath)))
+            suggestion.click()
+            print(f"    AKCJA: Wybrano tag dla strony '{tag_name}'.")
+            random_sleep(0.5, 1)
+        except (NoSuchElementException, TimeoutException):
+            print(f"  OSTRZEŻENIE: Nie znaleziono sugestii tagowania. Kontynuuję jako zwykły tekst.")
+            element.send_keys(" ")
+        
+        # Dokończ pisanie reszty komentarza
+        for char in text_after_tag:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+
+    else:
+        # Standardowe pisanie
+        for char in text:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+
 def random_sleep(min_seconds, max_seconds):
     time.sleep(random.uniform(min_seconds, max_seconds))
 
@@ -88,20 +196,6 @@ def human_typing(element, text):
 def human_scroll(driver):
     driver.execute_script(f"window.scrollBy(0, {random.randint(400, 800)});")
     random_sleep(1, 3)
-
-def take_error_screenshot(driver, location_name="unknown_error"):
-    try:
-        if not os.path.exists(ERROR_SCREENSHOTS_DIR):
-            os.makedirs(ERROR_SCREENSHOTS_DIR)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(ERROR_SCREENSHOTS_DIR, f"ERROR_{location_name}_{timestamp}.png")
-        if driver and hasattr(driver, 'save_screenshot'):
-             driver.save_screenshot(filename)
-             print(f"BŁĄD ZAPISANO: Zrzut ekranu zapisany w: {filename}")
-        else:
-             print("BŁĄD: Sterownik niedostępny, aby zrobić zrzut ekranu.")
-    except Exception as e:
-        logging.error(f"Krytyczny błąd podczas zapisu zrzutu ekranu: {e}")
 
 def log_ai_interaction(post_text, ai_response):
     try:
@@ -224,7 +318,7 @@ def try_hide_all_from_user(driver, post_container_element, author_name):
         return True
     except (NoSuchElementException, TimeoutException) as e:
         print(f"  BŁĄD: Nie udało się wykonać sekwencji ukrywania. Błąd: {str(e).splitlines()[0]}")
-        take_error_screenshot(driver, "hide_sequence_failed")
+        log_error_state(driver, "hide_sequence_failed")
         try:
             driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE); random_sleep(0.5, 0.8)
             driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE) 
@@ -232,7 +326,7 @@ def try_hide_all_from_user(driver, post_container_element, author_name):
         return False
     except Exception as e:
         print(f"  KRYTYCZNY BŁĄD w funkcji `try_hide_all_from_user`: {e}"); traceback.print_exc()
-        take_error_screenshot(driver, "hide_sequence_fatal")
+        log_error_state(driver, "hide_sequence_fatal")
         return False
 
 def update_airtable(status_to_update):
@@ -261,15 +355,25 @@ def update_airtable(status_to_update):
 
 def comment_and_check_status(driver, main_post_container, comment_list):
     wait = WebDriverWait(driver, 10)
-    comment_textbox, action_context = None, None 
+    comment_textbox, action_context = None, None
+    
     try:
         comment_button_xpath = ".//div[@aria-label='Dodaj komentarz' or @aria-label='Comment'][@role='button']"
         comment_button = main_post_container.find_element(By.XPATH, comment_button_xpath)
         driver.execute_script("arguments[0].click();", comment_button)
         print("    AKCJA: Ścieżka A - Kliknięto 'Skomentuj'."); random_sleep(1.5, 2.5)
-        new_container_xpath = ("//div[@role='dialog' and contains(@class, 'x1n2onr6')]")
+        
+        new_container_xpath = (
+            "//div[@role='dialog' and contains(@class, 'x1n2onr6') and contains(@class, 'x1ja2u2z') and "
+            "contains(@class, 'x1afcbsf') and contains(@class, 'xdt5ytf') and contains(@class, 'x1a2a7pz') and "
+            "contains(@class, 'x71s49j') and contains(@class, 'x1qjc9v5') and contains(@class, 'xazwl86') and "
+            "contains(@class, 'x1hl0hii') and contains(@class, 'x1aq6byr') and contains(@class, 'x2k6n7x') and "
+            "contains(@class, 'x78zum5') and contains(@class, 'x1plvlek') and contains(@class, 'xryxfnj') and "
+            "contains(@class, 'xcatxm7') and contains(@class, 'xrgej4m') and contains(@class, 'xh8yej3')]"
+        )
         action_context = wait.until(EC.visibility_of_element_located((By.XPATH, new_container_xpath)))
         comment_textbox = action_context.find_element(By.XPATH, ".//div[@role='textbox']")
+        
     except (NoSuchElementException, TimeoutException):
         print("    INFO: Ścieżka B - Próba znalezienia pola tekstowego bezpośrednio.")
         action_context = main_post_container
@@ -278,37 +382,53 @@ def comment_and_check_status(driver, main_post_container, comment_list):
             comment_textbox = action_context.find_element(By.XPATH, direct_textbox_xpath)
         except NoSuchElementException:
             print("  BŁĄD: Nie znaleziono ani przycisku 'Skomentuj', ani bezpośredniego pola tekstowego.")
-            take_error_screenshot(driver, "comment_field_not_found")
+            log_error_state(driver, "comment_field_not_found")
             return None
+    
     if comment_textbox and action_context:
         try:
-            human_typing(comment_textbox, random.choice(comment_list))
+            comment_to_write = random.choice(comment_list)
+            human_typing_with_tagging(driver, comment_textbox, comment_to_write, tag_name="Zakręcone Korepetycje - Matematyka")
             random_sleep(1, 2)
             comment_textbox.send_keys(Keys.RETURN)
             print("    AKCJA: Wysłano komentarz. Czekam..."); random_sleep(7, 9)
         except Exception as e:
             print(f"  BŁĄD: Problem podczas wpisywania/wysyłania komentarza: {e}")
-            take_error_screenshot(driver, "comment_send_failed")
+            log_error_state(driver, "comment_send_failed")
             return None
+    
     try:
         group_rules_span = driver.find_element(By.XPATH, "//span[text()='Zasady grupy']")
         if group_rules_span.is_displayed():
             understand_button = driver.find_element(By.XPATH, "//div[@aria-label='Rozumiem'][@role='button']")
             driver.execute_script("arguments[0].click();", understand_button)
             random_sleep(1, 1.5)
-    except NoSuchElementException: pass 
+    except NoSuchElementException: 
+        pass
+    
     status = "Przesłane"
     wait_short = WebDriverWait(driver, 3)
+    
     try:
         rejected_xpath = "//span[contains(text(), 'Odrzucono')] | //div[contains(text(), 'Odrzucono')]"
         wait_short.until(EC.presence_of_element_located((By.XPATH, rejected_xpath)))
         status = "Odrzucone"
+        
+        if status in ["Odrzucone", "Oczekuję"]:
+            log_error_state(driver, f"moderacja_status_{status.lower()}")
+            
     except TimeoutException:
         try:
             pending_xpath = "//span[contains(text(), 'Oczekujący')] | //div[contains(text(), 'Oczekujący')]"
             wait_short.until(EC.presence_of_element_located((By.XPATH, pending_xpath)))
             status = "Oczekuję"
-        except TimeoutException: pass
+            
+            if status in ["Odrzucone", "Oczekuję"]:
+                log_error_state(driver, f"moderacja_status_{status.lower()}")
+                
+        except TimeoutException: 
+            pass
+    
     print(f"    STATUS KOMENTARZA: {status.upper()}")
     return status
 
@@ -321,7 +441,7 @@ def initialize_driver_and_login():
         service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
-        
+        options.add_argument("--headless=new") 
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
         options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
         options.add_argument("--disable-notifications")
@@ -349,7 +469,7 @@ def initialize_driver_and_login():
     except Exception as e:
         logging.critical(f"Błąd krytyczny podczas inicjalizacji: {e}", exc_info=True)
         if driver:
-            take_error_screenshot(driver, "initialization_failed")
+            log_error_state(driver, "initialization_failed")
             driver.quit()
         return None
 
@@ -385,24 +505,30 @@ def search_and_filter(driver):
         return True
     except Exception as e:
         logging.error(f"Błąd podczas wyszukiwania lub filtrowania: {e}", exc_info=True)
-        take_error_screenshot(driver, "search_and_filter")
+        log_error_state(driver, "search_and_filter")
         return False
 
 def process_posts(driver, model):
     print("\n--- ROZPOCZYNANIE PRZETWARZANIA POSTÓW ---")
     processed_keys = load_processed_post_keys()
+    
     no_new_posts_in_a_row = 0
-    max_stale_scrolls = 5
+    max_stale_scrolls = 50
     LICZBA_RODZICOW_DO_GORY = 5 
     print(f"Używana stała liczba rodziców do znalezienia kontenera: {LICZBA_RODZICOW_DO_GORY}")
+    
+    # --- System limitowania akcji (zmienne muszą być zdefiniowane globalnie/na początku funkcji) ---
     action_timestamps = []
-    LIMIT_30_MIN = 15
+    LIMIT_30_MIN = 10
     LIMIT_60_MIN = 20
+    # ---------------------------------------------------------------------------------------------
+    
     loop_count = 0
     while True:
         loop_count += 1
         print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
         try:
+            # --- WERYFIKACJA LIMITÓW AKCJI ---
             current_time = time.time()
             action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
             actions_last_30_min = sum(1 for t in action_timestamps if current_time - t < 1800)
@@ -420,9 +546,11 @@ def process_posts(driver, model):
                 time.sleep(wait_time)
                 continue
             print(f"INFO: Stan limitów: {actions_last_30_min}/{LIMIT_30_MIN} (30 min), {actions_last_60_min}/{LIMIT_60_MIN} (60 min).")
-            
+            # --- Koniec weryfikacji limitów ---
+
             story_message_xpath = "//div[@data-ad-rendering-role='story_message']"
             story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
+            
             if not story_elements_on_page:
                 print("OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Czekam...")
                 random_sleep(8, 12)
@@ -432,18 +560,24 @@ def process_posts(driver, model):
             page_refreshed_in_loop = False
             for i, story_element in enumerate(story_elements_on_page):
                 try:
+                    # Krok 1: Znajdź główny kontener nadrzędny
                     main_post_container = story_element.find_element(By.XPATH, f"./ancestor::*[{LICZBA_RODZICOW_DO_GORY}]")
+                    
+                    # Krok 2: Ekstrakcja autora i treści
                     author_name = "Nieznany"
                     try:
                         author_element = main_post_container.find_element(By.XPATH, ".//strong | .//h3//a | .//h2//a")
                         author_name = author_element.text
                     except NoSuchElementException: pass
                     post_text = story_element.text
-                    post_key = f"{author_name}_{post_text[:100]}"
+                    post_key = f"{author_name}_{post_text[:100]}" 
+
+                    # Sprawdzanie duplikatów
                     if post_key in processed_keys:
                         print(f"--- DUPLIKAT POMINIĘTY ---\n  KLUCZ: {post_key}\n  AUTOR: {author_name}\n  TREŚĆ: {post_text[:80]}...\n--------------------------")
                         continue 
                         
+                    # Sprawdzanie liczby komentarzy (>= 10)
                     try:
                         comment_count_span_xpath = ".//span[contains(text(), 'komentarz') and not(contains(text(), 'Wyświetl więcej'))]"
                         comment_span = main_post_container.find_element(By.XPATH, comment_count_span_xpath)
@@ -455,6 +589,8 @@ def process_posts(driver, model):
                     except NoSuchElementException: pass
 
                     new_posts_found_this_scroll += 1
+                    
+                    # Krok 4: Klasyfikacja AI i Logowanie
                     print(f"\n[NOWY POST] Analizowanie posta od: {author_name}")
                     classification = classify_post_with_gemini(model, post_text)
                     log_ai_interaction(post_text, classification)
@@ -462,6 +598,7 @@ def process_posts(driver, model):
                     
                     if category == 'SZUKAM':
                         should_comment, comment_reason, comment_list_to_use = False, "", COMMENT_TEXTS_STANDARD
+                        
                         if level in ['PODSTAWOWA_1_4', 'STUDIA']:
                             print(f"INFO: Pomijanie posta. Poziom nauczania ('{level}') jest poza zakresem.")
                         else:
@@ -481,31 +618,38 @@ def process_posts(driver, model):
                                 page_refreshed_in_loop = True
                         elif level not in ['PODSTAWOWA_1_4', 'STUDIA']:
                             print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
+                    
                     elif category == 'OFERUJE':
-                        if any(keyword in author_name.lower() for keyword in AUTHOR_FILTER_KEYWORDS):
+                        lower_author_name = author_name.lower()
+                        if any(keyword in lower_author_name for keyword in AUTHOR_FILTER_KEYWORDS):
                              print(f"INFO: Pomijam ofertę od źródła ({author_name}).")
                         else:
                             print(f"❌ ZNALEZIONO OFERTĘ. Uruchamianie procedury ukrywania od '{author_name}'...")
                             try_hide_all_from_user(driver, main_post_container, author_name)
+                    
                     else:
                         print(f"INFO: Pomijanie posta. Kategoria: {category}, Przedmiot: {subject}, Poziom: {level}")
                     
                     processed_keys.add(post_key)
                     if page_refreshed_in_loop: break
+                
+                # --- BLOK OBSŁUGI BŁĘDÓW WEWNĄTRZ PĘTLI POSTA ---
                 except (StaleElementReferenceException, NoSuchElementException) as e:
                     logging.warning(f"Element posta stał się nieaktualny. Błąd: {type(e).__name__}")
-                    take_error_screenshot(driver, "post_element_stale")
+                    log_error_state(driver, "post_element_stale")
                     if page_refreshed_in_loop: break
                     continue
                 except Exception as e:
                     logging.error(f"Błąd wewnątrz pętli posta: {e}", exc_info=True)
-                    take_error_screenshot(driver, "post_critical_inner")
+                    log_error_state(driver, "post_critical_inner")
                     if page_refreshed_in_loop: break
                     continue
             
+            # Jeśli pętla została przerwana, bo strona się odświeżyła, musimy zacząć nową pętlę while
             if page_refreshed_in_loop:
+                print("INFO: Strona została odświeżona, rozpoczynam nową pętlę przetwarzania.")
                 no_new_posts_in_a_row = 0
-                save_processed_post_keys(processed_keys)
+                save_processed_post_keys(processed_keys) 
                 continue
             
             if new_posts_found_this_scroll > 0:
@@ -515,7 +659,7 @@ def process_posts(driver, model):
             else:
                 print("INFO: Brak nowych postów na widocznym ekranie.")
                 no_new_posts_in_a_row += 1
-            
+
             if no_new_posts_in_a_row >= max_stale_scrolls:
                 print(f"INFO: Brak nowych postów od {max_stale_scrolls} scrollowań. Odświeżam stronę...")
                 driver.refresh(); random_sleep(10, 20)
@@ -527,9 +671,22 @@ def process_posts(driver, model):
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logging.error(f"Błąd w głównej pętli: {e}", exc_info=True)
-            take_error_screenshot(driver, "process_loop_fatal")
-            random_sleep(25, 35)
+            # --- MECHANIZM ODZYSKIWANIA PRZEGLĄDARKI ---
+            logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
+            log_error_state(driver, "process_loop_fatal")
+            print("INFO: Wykryto błąd. Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
+            time.sleep(30)
+            
+            try:
+                print("INFO: Odświeżam stronę i czekam, aby zresetować stan interfejsu...")
+                driver.refresh()
+                random_sleep(15, 25)
+                # Resetujemy licznik, aby zacząć skanowanie od nowa
+                no_new_posts_in_a_row = 0
+            except Exception as refresh_e:
+                logging.critical(f"BŁĄD: Odświeżenie przeglądarki zawiodło! {refresh_e}. Kontynuuję oczekiwanie.")
+                random_sleep(25, 35) 
+            # --- KONIEC ODZYSKIWANIA ---
 
 # --- Główny Blok Wykonawczy ---
 if __name__ == "__main__":
@@ -561,7 +718,7 @@ if __name__ == "__main__":
         print("\nINFO: Przerwano działanie skryptu przez użytkownika (Ctrl-C).")
     except Exception as e:
         logging.critical(f"Krytyczny błąd ogólny: {e}", exc_info=True)
-        if driver: take_error_screenshot(driver, "main_fatal_error")
+        if driver: log_error_state(driver, "main_fatal_error")
     finally:
         if driver: print("INFO: Zamykanie przeglądarki..."); driver.quit()
         print("INFO: Program zakończył działanie.")
