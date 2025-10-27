@@ -451,6 +451,8 @@ def initialize_driver_and_login():
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
+        options.add_argument(f"--user-data-dir={CHROME_PROFILE_DIR}") 
+
 
         driver = webdriver.Chrome(service=service, options=options)
         
