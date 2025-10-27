@@ -331,6 +331,7 @@ def try_hide_all_from_user(driver, post_container_element, author_name):
 
 def update_airtable(status_to_update):
     if not AIRTABLE_AVAILABLE: return
+    random_sleep(3, 5) 
     print(f"INFO: [Airtable] Próba aktualizacji statystyk dla statusu: '{status_to_update}'")
     try:
         api = Api(AIRTABLE_API_KEY)
