@@ -436,35 +436,33 @@ def comment_and_check_status(driver, main_post_container, comment_list):
 # --- GŁÓWNE FUNKCJE ---
 
 def initialize_driver_and_login():
-    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB STEALTH) ---")
+    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB UPROSZCZONY) ---")
     driver = None
     try:
         service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
+        
+        # --- NAJWAŻNIEJSZE OPCJE DLA SERWERA ---
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--headless=new") 
-        options.add_argument("--disable-gpu") # Często wymagane w starszych instancjach
-        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-        options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
-        options.add_argument("--disable-notifications")
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
-        options.add_argument(f"--user-data-dir={CHROME_PROFILE_DIR}") 
-
-
+        options.add_argument("--disable-gpu") 
+        options.add_argument("--window-size=1920,1080")
+        
+        # --- Używamy unikalnego katalogu, ale w /tmp, co jest bezpieczniejsze na serwerach ---
+        options.add_argument(f"--user-data-dir=/tmp/chrome_profile_{random.randint(1000, 9999)}")
+        
         driver = webdriver.Chrome(service=service, options=options)
         
-        stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
-        print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
+        print("SUKCES: Przeglądarka uruchomiona w trybie headless.")
         
         driver.get("https://www.facebook.com")
         
         if not load_cookies(driver, COOKIES_FILE):
-            input("!!! PROSZĘ, ZALOGUJ SIĘ RĘCZNIE, a następnie naciśnij ENTER tutaj...")
-            save_cookies(driver, COOKIES_FILE)
+            print("KRYTYCZNY BŁĄD: Nie znaleziono ciasteczek. W trybie headless nie można się zalogować. Zatrzymaj skrypt, uruchom go w trybie graficznym raz, aby wygenerować ciasteczka.")
+            driver.quit()
+            return None
 
         wait = WebDriverWait(driver, 15)
         wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Szukaj na Facebooku']")))
