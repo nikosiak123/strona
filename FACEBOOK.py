@@ -37,8 +37,8 @@ from selenium.webdriver.common.keys import Keys
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
-PATH_DO_GOOGLE_CHROME = os.environ.get('CHROME_BIN_PATH', '/opt/google/chrome/chrome')
-PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/home/nikodnaj/PROJEKT_AUTOMATYZACJA/chromedriver-linux64/chromedriver') 
+PATH_DO_GOOGLE_CHROME = os.environ.get('CHROME_BIN_PATH', '/usr/bin/google-chrome')
+PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/usr/local/bin/chromedriver')
 
 AIRTABLE_API_KEY = "patcSdupvwJebjFDo.7e15a93930d15261989844687bcb15ac5c08c84a29920c7646760bc6f416146d"
 AIRTABLE_BASE_ID = "appTjrMTVhYBZDPw9"
