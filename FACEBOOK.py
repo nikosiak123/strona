@@ -521,8 +521,8 @@ def process_posts(driver, model):
     
     # --- System limitowania akcji (zmienne muszą być zdefiniowane globalnie/na początku funkcji) ---
     action_timestamps = []
-    LIMIT_30_MIN = 10
-    LIMIT_60_MIN = 20
+    LIMIT_30_MIN = 6
+    LIMIT_60_MIN = 8
     # ---------------------------------------------------------------------------------------------
     
     loop_count = 0
