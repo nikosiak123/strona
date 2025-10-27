@@ -443,6 +443,7 @@ def initialize_driver_and_login():
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
         options.add_argument("--headless=new") 
+        options.add_argument("--disable-gpu") # Często wymagane w starszych instancjach
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
         options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
         options.add_argument("--disable-notifications")
