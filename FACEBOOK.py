@@ -39,7 +39,6 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 # --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
 PATH_DO_GOOGLE_CHROME = os.environ.get('CHROME_BIN_PATH', '/opt/google/chrome/chrome')
 PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/home/nikodnaj/PROJEKT_AUTOMATYZACJA/chromedriver-linux64/chromedriver') 
-CHROME_PROFILE_DIR = os.path.join(os.getcwd(), "chrome_profile_data")
 
 AIRTABLE_API_KEY = "patcSdupvwJebjFDo.7e15a93930d15261989844687bcb15ac5c08c84a29920c7646760bc6f416146d"
 AIRTABLE_BASE_ID = "appTjrMTVhYBZDPw9"
@@ -436,33 +435,32 @@ def comment_and_check_status(driver, main_post_container, comment_list):
 # --- GŁÓWNE FUNKCJE ---
 
 def initialize_driver_and_login():
-    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB UPROSZCZONY) ---")
+    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB STEALTH) ---")
     driver = None
     try:
         service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
-        
-        # --- NAJWAŻNIEJSZE OPCJE DLA SERWERA ---
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--headless=new") 
-        options.add_argument("--disable-gpu") 
-        options.add_argument("--window-size=1920,1080")
-        
-        # --- Używamy unikalnego katalogu, ale w /tmp, co jest bezpieczniejsze na serwerach ---
-        options.add_argument(f"--user-data-dir=/tmp/chrome_profile_{random.randint(1000, 9999)}")
-        
+        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
+        options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
+        options.add_argument("--disable-notifications")
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+
         driver = webdriver.Chrome(service=service, options=options)
         
-        print("SUKCES: Przeglądarka uruchomiona w trybie headless.")
+        stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
+        print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
         
         driver.get("https://www.facebook.com")
         
         if not load_cookies(driver, COOKIES_FILE):
-            print("KRYTYCZNY BŁĄD: Nie znaleziono ciasteczek. W trybie headless nie można się zalogować. Zatrzymaj skrypt, uruchom go w trybie graficznym raz, aby wygenerować ciasteczka.")
-            driver.quit()
-            return None
+            input("!!! PROSZĘ, ZALOGUJ SIĘ RĘCZNIE, a następnie naciśnij ENTER tutaj...")
+            save_cookies(driver, COOKIES_FILE)
 
         wait = WebDriverWait(driver, 15)
         wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Szukaj na Facebooku']")))
