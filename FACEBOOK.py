@@ -443,7 +443,14 @@ def initialize_driver_and_login():
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
         options.add_argument("--headless=new") 
-
+        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
+        options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
+        options.add_argument("--disable-notifications")
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
 
         driver = webdriver.Chrome(service=service, options=options)
         
