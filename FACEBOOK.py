@@ -451,7 +451,6 @@ def initialize_driver_and_login():
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
-        options.add_argument('--user-data-dir=/home/nikodnaj3/strona/selenium_profile_facebook')
 
         driver = webdriver.Chrome(service=service, options=options)
         
