@@ -518,6 +518,11 @@ def process_posts(driver, model):
     LICZBA_RODZICOW_DO_GORY = 5 
     print(f"Używana stała liczba rodziców do znalezienia kontenera: {LICZBA_RODZICOW_DO_GORY}")
     
+    # --- NOWE ZMIENNE DLA RESETU ---
+    MAX_NO_CONTENT_WARNINGS = 10
+    no_content_warning_count = 0
+    # --- KONIEC NOWYCH ZMIENNYCH ---
+
     # --- System limitowania akcji (zmienne muszą być zdefiniowane globalnie/na początku funkcji) ---
     action_timestamps = []
     LIMIT_30_MIN = 6
@@ -529,7 +534,7 @@ def process_posts(driver, model):
         loop_count += 1
         print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
         try:
-            # --- WERYFIKACJA LIMITÓW AKCJI ---
+            # --- WERYFIKACJA LIMITÓW AKCJI (pozostaje bez zmian) ---
             current_time = time.time()
             action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
             actions_last_30_min = sum(1 for t in action_timestamps if current_time - t < 1800)
@@ -553,13 +558,34 @@ def process_posts(driver, model):
             story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
             
             if not story_elements_on_page:
+                # --- NOWA LOGIKA DLA BRAKU TREŚCI POSTÓW ---
                 print("OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Czekam...")
+                no_content_warning_count += 1
+                
+                if no_content_warning_count >= MAX_NO_CONTENT_WARNINGS:
+                    print(f"🔥🔥🔥 OSIĄGNIĘTO LIMIT ({MAX_NO_CONTENT_WARNINGS}) OSTRZEŻEŃ BRAKU TREŚCI! WYKONUJĘ PEŁNY RESET STEROWNIKA. 🔥🔥🔥")
+                    # Zapisujemy stan przed resetem
+                    save_processed_post_keys(processed_keys)
+                    
+                    # Rzucamy wyjątek, aby przejść do bloku 'except' na dole i uruchomić reset
+                    raise Exception("Wymuszony reset sterownika z powodu ciągłego braku treści postów.")
+                
+                # Jeśli nie osiągnięto limitu, po prostu czekamy i kontynuujemy
                 random_sleep(8, 12)
                 continue
-
+            else:
+                # Jeśli znaleziono posty, resetujemy licznik ostrzeżeń
+                no_content_warning_count = 0
+                
+            # ... Reszta kodu przetwarzania postów ...
+            
+            # --- Wewnątrz pętli for (reszta logiki przetwarzania postów pozostaje bez zmian) ---
             new_posts_found_this_scroll = 0
             page_refreshed_in_loop = False
             for i, story_element in enumerate(story_elements_on_page):
+                # ... (wszystkie kroki Krok 1 do końca pętli for pozostają niezmienione) ...
+                
+                # --- TUTAJ CAŁY KOD Z PĘTLI FOR ZOSTAW BEZ ZMIAN ---
                 try:
                     # Krok 1: Znajdź główny kontener nadrzędny
                     main_post_container = story_element.find_element(By.XPATH, f"./ancestor::*[{LICZBA_RODZICOW_DO_GORY}]")
@@ -617,6 +643,7 @@ def process_posts(driver, model):
                                 print("INFO: Odświeżanie strony po dodaniu komentarza...")
                                 driver.refresh(); random_sleep(4, 7)
                                 page_refreshed_in_loop = True
+                                no_content_warning_count = 0 # Jeśli był komentarz, resetujemy licznik ostrzeżeń!
                         elif level not in ['PODSTAWOWA_1_4', 'STUDIA']:
                             print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
                     
@@ -627,6 +654,7 @@ def process_posts(driver, model):
                         else:
                             print(f"❌ ZNALEZIONO OFERTĘ. Uruchamianie procedury ukrywania od '{author_name}'...")
                             try_hide_all_from_user(driver, main_post_container, author_name)
+                            no_content_warning_count = 0 # Jeśli była akcja ukrywania, resetujemy licznik ostrzeżeń!
                     
                     else:
                         print(f"INFO: Pomijanie posta. Kategoria: {category}, Przedmiot: {subject}, Poziom: {level}")
@@ -646,12 +674,16 @@ def process_posts(driver, model):
                     if page_refreshed_in_loop: break
                     continue
             
-            # Jeśli pętla została przerwana, bo strona się odświeżyła, musimy zacząć nową pętlę while
+            # --- Obsługa po pętli for ---
+            
             if page_refreshed_in_loop:
                 print("INFO: Strona została odświeżona, rozpoczynam nową pętlę przetwarzania.")
                 no_new_posts_in_a_row = 0
                 save_processed_post_keys(processed_keys) 
+                # UWAGA: no_content_warning_count jest już zresetowany w bloku komentarza/ukrywania
                 continue
+            
+            # ... (Logika scrollowania i brak nowych postów) ...
             
             if new_posts_found_this_scroll > 0:
                 print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów. Zapisuję stan...")
@@ -671,23 +703,45 @@ def process_posts(driver, model):
         
         except KeyboardInterrupt:
             break
+            
         except Exception as e:
-            # --- MECHANIZM ODZYSKIWANIA PRZEGLĄDARKI ---
-            logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
-            log_error_state(driver, "process_loop_fatal")
+            # --- BLOK OBSŁUGI KRYTYCZNEGO BŁĘDU (Również ten wymuszony reset!) ---
+            
+            # Sprawdzamy, czy to był błąd wymuszonego resetu
+            is_forced_reset = "Wymuszony reset sterownika" in str(e)
+            
+            if is_forced_reset:
+                 logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI: {str(e).splitlines()[0]} - WYKONUJĘ PEŁNY RESET DRIVERA")
+            else:
+                 logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
+                 log_error_state(driver, "process_loop_fatal")
+            
             print("INFO: Wykryto błąd. Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
             time.sleep(30)
             
-            try:
-                print("INFO: Odświeżam stronę i czekam, aby zresetować stan interfejsu...")
-                driver.refresh()
-                random_sleep(15, 25)
-                # Resetujemy licznik, aby zacząć skanowanie od nowa
-                no_new_posts_in_a_row = 0
-            except Exception as refresh_e:
-                logging.critical(f"BŁĄD: Odświeżenie przeglądarki zawiodło! {refresh_e}. Kontynuuję oczekiwanie.")
-                random_sleep(25, 35) 
-            # --- KONIEC ODZYSKIWANIA ---
+            # 1. Zamykamy stary sterownik
+            if driver:
+                try: driver.quit(); print("INFO: Stary sterownik przeglądarki zamknięty.")
+                except: pass
+            
+            # 2. Inicjalizujemy nowy sterownik
+            print("INFO: Inicjalizuję nowy sterownik przeglądarki i ponawiam logowanie...")
+            driver = initialize_driver_and_login() # Ta funkcja musi być dostępna globalnie
+            
+            if driver:
+                # 3. Wracamy do miejsca wyszukiwania i filtrowania
+                if search_and_filter(driver):
+                    print("INFO: Pomyślnie zresetowano sterownik, zalogowano i przywrócono kontekst wyszukiwania.")
+                    # 4. Resetujemy liczniki po udanym resecie, aby kontynuować od początku pętli while
+                    no_new_posts_in_a_row = 0
+                    no_content_warning_count = 0 
+                else:
+                    logging.critical("BŁĄD: Reset sterownika udany, ale nie udało się przywrócić kontekstu wyszukiwania. Koniec programu.")
+                    raise Exception("Niepowodzenie po resecie sterownika.")
+            else:
+                logging.critical("BŁĄD: Pełny reset sterownika i ponowna inicjalizacja zakończone niepowodzeniem. Koniec programu.")
+                raise Exception("Niepowodzenie po resecie sterownika.")
+            # --- KONIEC BLOKU KRYTYCZNEGO ---
 
 # --- Główny Blok Wykonawczy ---
 if __name__ == "__main__":
