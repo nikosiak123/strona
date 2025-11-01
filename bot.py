@@ -1,537 +1,805 @@
 # -*- coding: utf-8 -*-
-# Wersja: OSTATECZNA (AI + Airtable + Dwuetapowa Analiza + Spersonalizowane Przypomnienia)
-
-from flask import Flask, request, Response
-import threading
 import os
-import json
-import requests
+import pickle
 import time
+import traceback
+import sys
+import json
+import re
+import unicodedata
+import logging 
+import random
+from datetime import datetime
+
+# --- IMPORTY DLA AIRTABLE, VERTEX AI I STEALTH ---
+try:
+    from pyairtable import Api
+    AIRTABLE_AVAILABLE = True
+except ImportError:
+    AIRTABLE_AVAILABLE = False
+
 import vertexai
 from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
-from pyairtable import Api
-import errno
-import logging
-from datetime import datetime, timedelta
-import pytz
-from apscheduler.schedulers.background import BackgroundScheduler
-import atexit
-import uuid
+from selenium_stealth import stealth
 
-# --- Konfiguracja Ogólna ---
-app = Flask(__name__)
-VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "KOLAGEN")
-FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
-HISTORY_DIR = "conversation_store"
-MAX_HISTORY_TURNS = 10
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 
-# --- Wczytywanie konfiguracji z pliku ---
-config = {}
-try:
-    with open('config.json', 'r', encoding='utf-8') as f:
-        config = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError) as e:
-    print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
-    exit()
+# --- KONFIGURACJA LOGOWANIA ---
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
-AI_CONFIG = config.get("AI_CONFIG", {})
-AIRTABLE_CONFIG = config.get("AIRTABLE_CONFIG", {})
-PAGE_CONFIG = config.get("PAGE_CONFIG", {})
+# --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
+PATH_DO_GOOGLE_CHROME = os.environ.get('CHROME_BIN_PATH', '/opt/google/chrome/chrome')
+PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/usr/bin/chromedriver') 
 
-PROJECT_ID = AI_CONFIG.get("PROJECT_ID")
-LOCATION = AI_CONFIG.get("LOCATION")
-MODEL_ID = AI_CONFIG.get("MODEL_ID")
+AIRTABLE_API_KEY = "patcSdupvwJebjFDo.7e15a93930d15261989844687bcb15ac5c08c84a29920c7646760bc6f416146d"
+AIRTABLE_BASE_ID = "appTjrMTVhYBZDPw9"
+AIRTABLE_TABLE_NAME = "Statystyki"
 
-AIRTABLE_API_KEY = AIRTABLE_CONFIG.get("API_KEY")
-AIRTABLE_BASE_ID = AIRTABLE_CONFIG.get("BASE_ID")
-CLIENTS_TABLE_NAME = AIRTABLE_CONFIG.get("CLIENTS_TABLE_NAME")
+# --- STAŁE ---
+COOKIES_FILE = "cookies.pkl"
+PROCESSED_POSTS_FILE = "processed_posts_db.pkl"
+AI_LOG_FILE = "ai_analysis_log.txt"
+ERROR_SCREENSHOTS_DIR = "debug_logs"
+AUTHOR_FILTER_KEYWORDS = ['spotted', 'ogloszenia', 'ogłoszenia', 'korepetycje', 'nauka', 'szkoła', 'centrum', 'instytut', 'grupa', 'group']
 
-airtable_api = None
-clients_table = None
-if all([AIRTABLE_API_KEY, AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME]):
-    try:
-        airtable_api = Api(AIRTABLE_API_KEY)
-        clients_table = airtable_api.table(AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME)
-        print("--- Połączenie z Airtable OK.")
-    except Exception as e:
-        print(f"!!! BŁĄD: Nie można połączyć się z Airtable: {e}")
-else:
-    print("!!! OSTRZEŻENIE: Brak pełnej konfiguracji Airtable w config.json.")
+# --- ZAKTUALIZOWANE LISTY KOMENTARZY ---
+COMMENT_TEXTS_STANDARD = [
+    "Polecam @Zakręcone Korepetycje. Cenowo wychodzi super. Wreszcie widać realną poprawę w ocenach.",
+    "Bardzo polecam @Zakręcone Korepetycje. Córka mówi, że teraz rozumie 3 razy więcej niż na lekcji w szkole i widać mocną poprawę w ocenach. Mają bardzo dobrą cenę.",
+    "Polecam @Zakręcone Korepetycje. Cena super, a do tego bardzo dobra jakość zajęć. Oceny wyższe, niż przed lekcjami, o 2-3 stopnie  (:",
+]
+COMMENT_TEXTS_HIGH_SCHOOL = [
+    "Bardzo polecam @Zakręcone Korepetycje, mój syn napisał podstawę z matmy na 94%. Zajęcia prowadzone w bardzo miłej atmosferze.",
+]
+# --- Koniec stałych ---
 
-# === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ ===
-NUDGE_TASKS_FILE = "nudge_tasks.json"
-FOLLOW_UP_WINDOW_HOURS = 23
-TIMEZONE = "Europe/Warsaw"
-NUDGE_WINDOW_START, NUDGE_WINDOW_END = 6, 23
+# --- ZMIENNE DO IMITOWANIA CZŁOWIEKA ---
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+]
+WINDOW_SIZES = ["1920,1080", "1366,768", "1536,864"]
 
-# --- Znaczniki i Ustawienia Modelu ---
-AGREEMENT_MARKER = "[ZAPISZ_NA_LEKCJE]"
-EXPECTING_REPLY = "EXPECTING_REPLY"
-CONVERSATION_ENDED = "CONVERSATION_ENDED"
-FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
-
+# --- KONFIGURACJA AI ---
 GENERATION_CONFIG = GenerationConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
 SAFETY_SETTINGS = [
     SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH),
     SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
 ]
 
-# =====================================================================
-# === INICJALIZACJA AI ================================================
-# =====================================================================
-gemini_model = None
-try:
-    if not all([PROJECT_ID, LOCATION, MODEL_ID]):
-        print("!!! KRYTYCZNY BŁĄD: Brak pełnej konfiguracji AI w pliku config.json")
-    else:
-        print(f"--- Inicjalizowanie Vertex AI: Projekt={PROJECT_ID}, Lokalizacja={LOCATION}")
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
-        print("--- Inicjalizacja Vertex AI OK.")
-        print(f"--- Ładowanie modelu: {MODEL_ID}")
-        gemini_model = GenerativeModel(MODEL_ID)
-        print(f"--- Model {MODEL_ID} załadowany OK.")
-except Exception as e:
-    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
-
-
-# =====================================================================
-# === INSTRUKCJE SYSTEMOWE DLA AI =====================================
-# =====================================================================
-
-SYSTEM_INSTRUCTION_CLASSIFIER = f"""
-Twoim zadaniem jest analiza ostatniej wiadomości klienta w kontekście całej rozmowy i sklasyfikowanie jego intencji.
-Odpowiedz TYLKO I WYŁĄCZNIE jednym z trzech statusów: `{EXPECTING_REPLY}`, `{CONVERSATION_ENDED}`, `{FOLLOW_UP_LATER}`.
-
-- `{EXPECTING_REPLY}`: Użyj, gdy rozmowa jest w toku, a bot oczekuje odpowiedzi na pytanie.
-- `{CONVERSATION_ENDED}`: Użyj, gdy klient jednoznacznie kończy rozmowę lub odrzuca ofertę.
-- `{FOLLOW_UP_LATER}`: Użyj, gdy klient deklaruje, że odezwie się później (np. "dam znać wieczorem", "muszę porozmawiać z mężem").
-"""
-
-SYSTEM_INSTRUCTION_ESTIMATOR = """
-Jesteś ekspertem w analizie języka naturalnego w celu estymacji czasu.
-- **Aktualna data i godzina to: `__CURRENT_TIME__`.**
-- **Kontekst:** Klient właśnie powiedział, że odezwie się później.
-
-Na podstawie poniższej historii rozmowy, oszacuj, kiedy NAJPRAWDOPODOBNIEJ skontaktuje się ponownie.
-Twoja odpowiedź MUSI być TYLKO I WYŁĄCZNIE datą i godziną w formacie ISO 8601: `YYYY-MM-DDTHH:MM:SS`.
-
-**REGUŁY:**
-- Bądź konserwatywny, dodaj 1-2 godziny buforu do swojego oszacowania.
-- Zawsze używaj tego samego roku, co w `__CURRENT_TIME__`.
-- Wynik musi być w przyszłości względem `__CURRENT_TIME__`.
-- Jeśli klient mówi ogólnie "wieczorem", załóż godzinę 20:30.
-- Jeśli klient mówi "po szkole", załóż godzinę 18:00.
-
-Przykład (zakładając `__CURRENT_TIME__` = `2025-09-18T15:00:00`):
-- Historia: "...klient: dam znać wieczorem." -> Twoja odpowiedź: `2025-09-18T20:30:00`
-"""
-
-SYSTEM_INSTRUCTION_GENERAL = """
-### O Tobie (Twoja Rola)
-Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji online. Twoim celem jest przekonanie użytkownika do umówienia pierwszej, testowej lekcji.
-- **Styl Komunikacji:** Twoje wiadomości muszą być KRÓTKIE i angażujące. Zawsze kończ je pytaniem. Zawsze zwracaj się do użytkownika per "Państwo". Pamiętaj, że możesz rozmawiać zarówno z rodzicem, jak i bezpośrednio z uczniem.
-
-### Informacje o Usłudze
-1.  **Cennik (za lekcję 60 minut):**
-    - Szkoła Podstawowa: 65 zł
-    - Szkoła średnia (klasy niematuralne, podstawa): 70 zł
-    - Szkoła średnia (klasy niematuralne, rozszerzenie): 75 zł
-    - Szkoła średnia (klasa maturalna, podstawa i rozszerzenie): 80 zł
-2.  **Format lekcji:**
-    - Korepetycje odbywają się online, 1-na-1 z doświadczonym korepetytorem.
-    - Platforma: Microsoft Teams. Wystarczy kliknąć w otrzymany link.
-
-### Kluczowe Zadania i Przepływ Rozmowy
-Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wiadomości i NIE zadając pytań, jeśli znasz już odpowiedź**:
-1.  **Powitanie:** JEŚLI pierwsza wiadomość użytkownika to ogólne powitanie, odpowiedz powitaniem i zapytaj, w czym możesz pomóc. JEŚLI użytkownik od razu pisze, że szuka korepetycji, przejdź bezpośrednio do kroku 2.
-2.  **Zbieranie informacji (Szkoła i klasa):** Zapytaj o klasę i typ szkoły ucznia.
-3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły, przejdź od razu do kroku 5.
-4.  **Zbieranie informacji (Poziom):** JEŚLI typ szkoły to liceum lub technikum i nie podano poziomu, w osobnej wiadomości zapytaj o poziom.
-5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę i format lekcji.
-6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji.
-
-### Jak Obsługiwać Sprzeciwy
-- JEŚLI klient ma wątpliwości, zapytaj o ich powód.
-- JEŚLI klient twierdzi, że uczeń będzie **rozkojarzony**, ODPOWIEDZ: "To częsta obawa, ale proszę się nie martwić. Nasi korepetytorzy prowadzą lekcje w bardzo angażujący sposób."
-- JEŚLI klient twierdzi, że korepetycje online się nie sprawdziły, ZAPYTAJ: "Czy uczeń miał już do czynienia z korepetycjami online 1-na-1, czy doświadczenie opiera się głównie na lekcjach szkolnych z czasów pandemii?"
-
-### Twój GŁÓWNY CEL i Format Odpowiedzi
-Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcję.
-- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji, Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
-"""
-
-# =====================================================================
-# === FUNKCJE POMOCNICZE ==============================================
-# =====================================================================
-def load_config():
+# --- NOWE FUNKCJE POMOCNICZE ---
+def log_error_state(driver, location_name="unknown_error"):
+    """Zapisuje zrzut ekranu (PNG) i pełny kod źródłowy (HTML) w przypadku błędu."""
     try:
-        with open('config.json', 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.critical(f"KRYTYCZNY BŁĄD wczytywania config.json: {e}")
-        return {}
-
-def get_user_profile(psid, page_access_token):
-    """Pobiera imię, nazwisko i zdjęcie profilowe użytkownika z Facebook Graph API."""
-    try:
-        # Dodajemy 'profile_pic' do listy pól, o które prosimy
-        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name,profile_pic&access_token={page_access_token}"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        # Zwracamy teraz trzy wartości
-        return data.get("first_name"), data.get("last_name"), data.get("profile_pic")
-        
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
-        return None, None, None
-
-def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
-    """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go, zapisując dane do nowych kolumn."""
-    if not clients_table_obj:
-        logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
-        return None
-
-    try:
-        existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
-        if existing_client:
-            logging.info(f"Klient o PSID {psid} już istnieje w Airtable.")
-            return psid
-        
-        logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
-        first_name, last_name, profile_pic_url = get_user_profile(psid, page_access_token)
-        
-        # === ZMIANA NAZW PÓL JEST TUTAJ ===
-        new_client_data = {
-            "ClientID": psid,
-            "Źródło": "Messenger Bot"
-        }
-        if first_name:
-            new_client_data["ImięKlienta"] = first_name # Zmieniono z "Imię"
-        if last_name:
-            new_client_data["NazwiskoKlienta"] = last_name # Zmieniono z "Nazwisko"
-        if profile_pic_url:
-            new_client_data["Zdjęcie"] = profile_pic_url
-        # === KONIEC ZMIANY ===
+        if not os.path.exists(ERROR_SCREENSHOTS_DIR):
+            os.makedirs(ERROR_SCREENSHOTS_DIR)
             
-        clients_table_obj.create(new_client_data)
-        logging.info(f"Pomyślnie utworzono nowego klienta w Airtable dla PSID {psid}.")
-        return psid
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_filename = os.path.join(ERROR_SCREENSHOTS_DIR, f"ERROR_{location_name}_{timestamp}")
         
+        # 1. Zapis zrzutu ekranu (PNG)
+        if driver and hasattr(driver, 'save_screenshot'):
+             driver.save_screenshot(f"{base_filename}.png")
+             print(f"BŁĄD ZAPISANO: Zrzut ekranu zapisany w: {base_filename}.png")
+        
+        # 2. Zapis pełnego kodu źródłowego (HTML)
+        if driver and hasattr(driver, 'page_source'):
+            page_html = driver.page_source
+            with open(f"{base_filename}.html", "w", encoding="utf-8") as f:
+                f.write(page_html)
+            print(f"BŁĄD ZAPISANO: Kod źródłowy HTML zapisany w: {base_filename}.html")
+        else:
+             print("BŁĄD: Sterownik niedostępny, aby zapisać pełny stan strony.")
+
     except Exception as e:
-        logging.error(f"Wystąpił błąd podczas operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
-        return None
+        logging.error(f"Krytyczny błąd podczas próby zapisu stanu błędu: {e}")
 
-def ensure_dir(directory):
-    try: os.makedirs(directory)
-    except OSError as e:
-        if e.errno != errno.EEXIST: raise
 
-def load_history(user_psid):
-    filepath = os.path.join(HISTORY_DIR, f"{user_psid}.json")
-    if not os.path.exists(filepath): return []
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            history_data = json.load(f)
-        history = []
-        for msg_data in history_data:
-            if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
-                parts = [Part.from_text(p['text']) for p in msg_data['parts']]
-                history.append(Content(role=msg_data['role'], parts=parts))
-        return history
-    except Exception: return []
+def human_typing_with_tagging(driver, element, text, tag_name="Zakręcone Korepetycje"):
+    """
+    Symuluje pisanie tekstu, z inteligentnym tagowaniem.
+    Poprawnie identyfikuje pełną nazwę do tagowania i kontynuuje od właściwego miejsca.
+    """
+    wait = WebDriverWait(driver, 5)
 
-def save_history(user_psid, history):
-    ensure_dir(HISTORY_DIR)
-    filepath = os.path.join(HISTORY_DIR, f"{user_psid}.json")
-    history_to_save = history[-(MAX_HISTORY_TURNS * 2):]
-    history_data = []
-    for msg in history_to_save:
-        parts_data = [{'text': part.text} for part in msg.parts]
-        history_data.append({'role': msg.role, 'parts': parts_data})
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(history_data, f, indent=2)
-    except Exception as e:
-        logging.error(f"BŁĄD zapisu historii dla {user_psid}: {e}")
+    if '@' in text:
+        # 1. Dzielimy tekst na część przed i po znaku '@'
+        parts = text.split('@', 1)
+        before_tag = parts[0]
+        after_tag_full = parts[1]
 
-# =====================================================================
-# === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
-# =====================================================================
-def load_nudge_tasks(tasks_file):
-    if not os.path.exists(tasks_file): return {}
-    try:
-        with open(tasks_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception: return {}
-
-def save_nudge_tasks(tasks, tasks_file):
-    try:
-        with open(tasks_file, 'w', encoding='utf-8') as f:
-            json.dump(tasks, f, indent=2)
-    except Exception as e:
-        logging.error(f"Błąd zapisu zadań przypomnień: {e}")
-
-def cancel_nudge(psid, tasks_file):
-    tasks = load_nudge_tasks(tasks_file)
-    task_id_to_remove = next((task_id for task_id, task in tasks.items() if task.get("psid") == psid), None)
-    if task_id_to_remove:
-        del tasks[task_id_to_remove]
-        save_nudge_tasks(tasks, tasks_file)
-        logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
-
-def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None):
-    cancel_nudge(psid, tasks_file)
-    tasks = load_nudge_tasks(tasks_file)
-    task_id = str(uuid.uuid4())
-    task_data = {"psid": psid, "page_id": page_id, "status": status}
-    if nudge_time_iso: task_data["nudge_time_iso"] = nudge_time_iso
-    if nudge_message: task_data["nudge_message"] = nudge_message
-    tasks[task_id] = task_data
-    save_nudge_tasks(tasks, tasks_file)
-    logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid}.")
-
-def check_and_send_nudges():
-    # logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
-    page_config_from_file = load_config().get("PAGE_CONFIG", {})
-    if not page_config_from_file:
-        logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
-        return
-    tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
-    now = datetime.now(pytz.timezone(TIMEZONE))
-    tasks_to_modify = {}
-    for task_id, task in list(tasks.items()):
-        if not task.get("status", "").startswith("pending"): continue
+        # 2. Zakładamy, że nazwa strony to wszystko do następnego znaku interpunkcyjnego lub końca zdania.
+        # W Twoim przypadku, "Zakręcone Korepetycje" jest nazwą do wpisania.
+        # Skrypt musi wiedzieć, kiedy przestać wpisywać i kliknąć.
+        
+        # Nazwa, którą wpisujemy, aby wywołać sugestię
+        page_name_to_type = "Zakręcone Korepetycje"
+        
+        # Znajdź pełną nazwę użytą w tekście komentarza (może być inna niż `tag_name`)
+        # np. jeśli w tekście jest "Polecam @ZakręconeKorepetycje!", to chcemy zidentyfikować "ZakręconeKorepetycje"
+        # Na razie zakładamy, że jest to zawsze "Zakręcone Korepetycje"
+        
+        # Tekst, który ma być wpisany PO tagu
+        # Znajdujemy, gdzie w oryginalnym tekście kończy się nazwa strony i bierzemy resztę
         try:
-            nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
-        except (ValueError, KeyError):
-            logging.error(f"[Scheduler] Błąd formatu daty w zadaniu {task_id}. Usuwam zadanie.")
-            task['status'] = 'failed_date_format'
-            tasks_to_modify[task_id] = task
-            continue
-        if now >= nudge_time:
-            is_in_window = NUDGE_WINDOW_START <= now.hour < NUDGE_WINDOW_END
-            if is_in_window:
-                logging.info(f"[Scheduler] Czas na przypomnienie (status: {task['status']}) dla PSID {task['psid']}")
-                page_config = page_config_from_file.get(task["page_id"])
-                if page_config and page_config.get("token"):
-                    psid, token = task['psid'], page_config["token"]
-                    message_to_send = task.get("nudge_message")
-                    if message_to_send:
-                        send_message(psid, message_to_send, token)
-                    task['status'] = 'done'
-                    tasks_to_modify[task_id] = task
-                else:
-                    task["status"] = "failed_no_token"
-                    tasks_to_modify[task_id] = task
+            # Wyszukajmy nazwę strony w tekście po '@', ignorując wielkość liter
+            match = re.search(re.escape(page_name_to_type), after_tag_full, re.IGNORECASE)
+            if match:
+                # Bierzemy tekst, który znajduje się po znalezionej nazwie
+                text_after_tag = after_tag_full[match.end():]
             else:
-                logging.info(f"[Scheduler] Zła pora. Przeplanowuję {task['psid']}...")
-                next_day_start = now.replace(hour=NUDGE_WINDOW_START, minute=5, second=0, microsecond=0)
-                if now.hour >= NUDGE_WINDOW_END: next_day_start += timedelta(days=1)
-                task["nudge_time_iso"] = next_day_start.isoformat()
-                tasks_to_modify[task_id] = task
-    if tasks_to_modify:
-        tasks.update(tasks_to_modify)
-        save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
-        logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
+                # Jeśli z jakiegoś powodu nie znajdziemy, bierzemy wszystko po pierwszym słowie
+                text_after_tag = " ".join(after_tag_full.split(' ')[1:])
 
-# =====================================================================
-# === FUNKCJE KOMUNIKACJI Z AI ========================================
-# =====================================================================
-def send_message(recipient_id, message_text, page_access_token):
-    if not all([recipient_id, message_text, page_access_token]): return
-    params = {"access_token": page_access_token}
-    payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
-    try:
-        r = requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=payload, timeout=30)
-        r.raise_for_status()
-        logging.info(f"Wysłano wiadomość do {recipient_id}: '{message_text[:50]}...'")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
+        except IndexError:
+             text_after_tag = ""
 
-def classify_conversation(history):
-    if not gemini_model: return EXPECTING_REPLY
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
-    prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
-    full_prompt = [
-        Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_CLASSIFIER)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
-        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
-    ]
-    try:
-        analysis_config = GenerationConfig(temperature=0.0)
-        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        status = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]: return status
-        return EXPECTING_REPLY
-    except Exception as e:
-        logging.error(f"BŁĄD klasyfikatora AI: {e}", exc_info=True)
-        return EXPECTING_REPLY
 
-def estimate_follow_up_time(history):
-    if not gemini_model: return None
-    now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-    formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
-    prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
-    full_prompt = [
-        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
-        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
-    ]
-    try:
-        analysis_config = GenerationConfig(temperature=0.2)
-        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        if not response.candidates: return None
-        time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if "T" in time_str and ":" in time_str: return time_str
-        return None
-    except Exception as e:
-        logging.error(f"BŁĄD estymatora czasu AI: {e}", exc_info=True)
-        return None
+        # --- Sekwencja Pisania ---
+        
+        # Wpisz tekst przed tagiem
+        for char in before_tag:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+        
+        # Wpisz znak '@' i zacznij pisać nazwę
+        element.send_keys('@')
+        random_sleep(0.5, 1)
+        
+        for char in page_name_to_type:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+        
+        random_sleep(1.5, 2.5)
 
-def get_gemini_response(history, prompt_details, is_follow_up=False):
-    if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
-    if is_follow_up:
-        system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, spersonalizowanej wiadomości przypominającej. "
-                              "Na podstawie historii rozmowy, nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
-        history_context = history[-4:] 
-        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
-                       Content(role="model", parts=[Part.from_text("Rozumiem. Stworzę wiadomość przypominającą.")])] + history_context
+        # Znajdź i kliknij sugestię
+        try:
+            # Używamy `tag_name` do znalezienia sugestii, bo ona może być inna
+            # np. "Zakręcone Korepetycje - Matematyka"
+            suggestion_xpath = f"//li[@role='option']//span[contains(text(), '{tag_name}')]"
+            suggestion = wait.until(EC.element_to_be_clickable((By.XPATH, suggestion_xpath)))
+            suggestion.click()
+            print(f"    AKCJA: Wybrano tag dla strony '{tag_name}'.")
+            random_sleep(0.5, 1)
+        except (NoSuchElementException, TimeoutException):
+            print(f"  OSTRZEŻENIE: Nie znaleziono sugestii tagowania. Kontynuuję jako zwykły tekst.")
+            element.send_keys(" ")
+        
+        # Dokończ pisanie reszty komentarza
+        for char in text_after_tag:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
+
     else:
-        system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
-            prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
-        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
-                       Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
-    try:
-        response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
-        if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
-        generated_text = "".join(part.text for part in response.candidates[0].content.parts).strip()
-        if is_follow_up and not generated_text:
-            logging.warning("AI (przypomnienie) zwróciło pusty tekst. Używam domyślnej wiadomości.")
-            return "Dzień dobry, chciałem tylko zapytać, czy udało się Państwu podjąć decyzję w sprawie lekcji?"
-        return generated_text
-    except Exception as e:
-        logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
-        return "Przepraszam, wystąpił nieoczekiwany błąd."
+        # Standardowe pisanie
+        for char in text:
+            element.send_keys(char)
+            random_sleep(0.05, 0.15)
 
-# =====================================================================
-# === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
-# =====================================================================
-def process_event(event_payload):
+def random_sleep(min_seconds, max_seconds):
+    time.sleep(random.uniform(min_seconds, max_seconds))
+
+def human_typing(element, text):
+    for char in text:
+        element.send_keys(char)
+        random_sleep(0.05, 0.2)
+
+def human_scroll(driver):
+    driver.execute_script(f"window.scrollBy(0, {random.randint(400, 800)});")
+    random_sleep(1, 3)
+
+def log_ai_interaction(post_text, ai_response):
     try:
-        logging.info("Wątek 'process_event' wystartował.")
-        if not PAGE_CONFIG: return
-        sender_id = event_payload.get("sender", {}).get("id")
-        recipient_id = event_payload.get("recipient", {}).get("id")
-        if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
-        if event_payload.get("read"):
-             logging.info(f"Użytkownik {sender_id} odczytał wiadomość. (Brak akcji anulującej)")
-             return
-        user_message_text = event_payload.get("message", {}).get("text", "").strip()
-        if not user_message_text: return
-        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-        page_config = PAGE_CONFIG.get(recipient_id)
-        if not page_config: return
-        page_token = page_config.get("token")
-        prompt_details = page_config.get("prompt_details")
-        page_name = page_config.get("name", "Nieznana Strona")
-        history = load_history(sender_id)
-        history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
-        ai_response_raw = get_gemini_response(history, prompt_details)
-        history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
-        
-        logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
-        conversation_status = classify_conversation(history)
-        logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
-        follow_up_time_iso = None
-        if conversation_status == FOLLOW_UP_LATER:
-            logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
-            follow_up_time_iso = estimate_follow_up_time(history)
-            logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
-        
-        final_message_to_user = ""
-        if AGREEMENT_MARKER in ai_response_raw:
-            client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
-            if client_id:
-                reservation_link = f"https://zakręcone-korepetycje.pl/?clientID={client_id}"
-                final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nProszę wybrać wolny termin. Zarezerwowana lekcja będzie automatycznie potwierdzona. Lekcję testową należy opłacić do 5 minut od połączenia się z korepetytorem. Termin lekcji można odwołać lub przełożyć używajac panelu klienta, do którego dostęp dostaną Państwo po rezerwacji lub ewentualnie kontaktująć się z nami. Link jest personalny proszę nie udostępniać go nikomu. Udostępnienie linku jest równoważne z udostępnieniem dostępu do zarządzania lekcjami. BARDZO PROSIMY O ODWOŁYWANIE lekcji w przypadku rozmyślenia się. W troscę o naszych klientów nie wymagamy płatności przed połączeniem, prosimy o nienadużywanie tego (;"
-            else:
-                final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
+        with open(AI_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write("="*80 + "\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("-" * 20 + " TEKST POSTA " + "-" * 20 + "\n")
+            f.write(post_text + "\n")
+            f.write("-" * 20 + " ODPOWIEDŹ AI " + "-" * 20 + "\n")
+            f.write(json.dumps(ai_response, indent=2, ensure_ascii=False) + "\n")
+            f.write("="*80 + "\n\n")
+    except Exception as e:
+        logging.error(f"Nie udało się zapisać logu AI do pliku: {e}")
+
+def save_cookies(driver, file_path):
+    try:
+        with open(file_path, 'wb') as file: pickle.dump(driver.get_cookies(), file)
+    except Exception as e: logging.error(f"Nie udało się zapisać ciasteczek: {e}")
+
+def load_cookies(driver, file_path):
+    if not os.path.exists(file_path): return False
+    try:
+        with open(file_path, 'rb') as file:
+            cookies = pickle.load(file)
+            if not cookies: return False
+            driver.get("https://www.facebook.com"); random_sleep(1, 2)
+            for cookie in cookies:
+                if 'expiry' in cookie: cookie['expiry'] = int(cookie['expiry'])
+                driver.add_cookie(cookie)
+            driver.refresh()
+            return True
+    except Exception as e:
+        logging.error(f"Nie udało się załadować ciasteczek: {e}")
+        return False
+
+def load_processed_post_keys():
+    if os.path.exists(PROCESSED_POSTS_FILE):
+        with open(PROCESSED_POSTS_FILE, 'rb') as f: return pickle.load(f)
+    return set()
+
+def save_processed_post_keys(keys_set):
+    with open(PROCESSED_POSTS_FILE, 'wb') as f: pickle.dump(keys_set, f)
+
+def classify_post_with_gemini(model, post_text):
+    default_response = {'category': "INNE", 'subject': None, 'level': None}
+    if not post_text or len(post_text.strip()) < 10:
+        return default_response
+    system_instruction = """
+Przeanalizuj poniższy tekst posta z Facebooka.
+1. Skategoryzuj intencję posta jako SZUKAM, OFERUJE lub INNE.
+2. Jeśli intencja to SZUKAM, zidentyfikuj przedmiot(y).
+   - Jeśli jest to MATEMATYKA, użyj "MATEMATYKA".
+   - Jeśli jest to FIZYKA, użyj "FIZYKA".
+   - Jeśli jest to JĘZYK ANGIELSKI, użyj "ANGIELSKI".
+   - Jeśli jest to JĘZYK POLSKI, użyj "POLSKI".
+   - Jeśli jest to inny, konkretny przedmiot (np. chemia, biologia), użyj "INNY_PRZEDMIOT".
+   - Jeśli w poście NIE MA informacji o przedmiocie, użyj "NIEZIDENTYFIKOWANY".
+   - Jeśli jest WIELE przedmiotów, zwróć je jako listę, np. ["MATEMATYKA", "FIZYKA"].
+3. Jeśli intencja to SZUKAM, określ poziom nauczania.
+   - Jeśli mowa o 4 klasie szkoły podstawowej lub niżej (np. "klasa 1-3", "czwarta klasa podstawówki"), użyj "PODSTAWOWA_1_4".
+   - Jeśli mowa o szkole średniej (liceum, technikum, matura), użyj "STANDARD_LICEUM".
+   - Jeśli mowa o studiach (np. "student", "politechnika", "uczelnia"), użyj "STUDIA".
+   - We wszystkich innych przypadkach (np. klasy 5-8 szkoły podstawowej) lub gdy poziom nie jest wspomniany, użyj "STANDARD".
+Odpowiedz TYLKO w formacie JSON:
+{{
+  "category": "SZUKAM" | "OFERUJE" | "INNE",
+  "subject": "MATEMATYKA" | "FIZYKA" | "ANGIELSKI" | "POLSKI" | "INNY_PRZEDMIOT" | "NIEZIDENTYFIKOWANY" | ["MATEMATYKA", ...],
+  "level": "PODSTAWOWA_1_4" | "STUDIA" | "STANDARD_LICEUM" | "STANDARD" | null
+}}
+Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
+"""
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(system_instruction)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Będę analizować tekst, zwracając kategorię, przedmiot(y) i poziom nauczania w formacie JSON.")]),
+        Content(role="user", parts=[Part.from_text(f"Tekst posta:\n---\n{post_text}\n---")])
+    ]
+    try:
+        response = model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        if not response.candidates:
+            logging.error(f"Odpowiedź AI zablokowana. Powód: {response.prompt_feedback}")
+            return {'category': "ERROR", 'subject': None, 'level': None}
+        raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+        result = json.loads(raw_text)
+        return result
+    except Exception as e:
+        logging.error(f"Nie udało się sklasyfikować posta: {e}")
+        if 'response' in locals() and hasattr(response, 'text'):
+             logging.error(f"SUROWA ODPOWIEDŹ PRZY BŁĘDZIE: {response.text}")
+        return {'category': "ERROR", 'subject': None, 'level': None}
+
+def try_hide_all_from_user(driver, post_container_element, author_name):
+    wait = WebDriverWait(driver, 10)
+    print(f"  INFO: Rozpoczynanie sekwencji UKRYWANIA WSZYSTKIEGO od '{author_name}'...")
+    try:
+        menu_button_xpath = ".//div[@aria-label='Działania dla tego posta'][@role='button']"
+        menu_button = post_container_element.find_element(By.XPATH, menu_button_xpath)
+        driver.execute_script("arguments[0].click();", menu_button)
+        print("    Krok 1/6: Kliknięto menu 'Działania dla tego posta'."); random_sleep(1.2, 1.8)
+        report_button_xpath = "//div[@role='menuitem']//span[text()='Zgłoś post']"
+        report_button = wait.until(EC.element_to_be_clickable((By.XPATH, report_button_xpath)))
+        driver.execute_script("arguments[0].click();", report_button)
+        print("    Krok 2/6: Kliknięto 'Zgłoś post'."); random_sleep(1.2, 1.8)
+        dont_want_to_see_xpath = "//div[@role='dialog']//span[text()='Nie chcę tego widzieć']"
+        dont_want_to_see_button = wait.until(EC.element_to_be_clickable((By.XPATH, dont_want_to_see_xpath)))
+        driver.execute_script("arguments[0].click();", dont_want_to_see_button)
+        print("    Krok 3/6: Kliknięto 'Nie chcę tego widzieć'."); random_sleep(1.2, 1.8)
+        hide_all_xpath = f"//div[@role='dialog']//span[starts-with(text(), 'Ukryj wszystko od')]"
+        hide_all_button = wait.until(EC.element_to_be_clickable((By.XPATH, hide_all_xpath)))
+        driver.execute_script("arguments[0].click();", hide_all_button)
+        print(f"    Krok 4/6: Kliknięto 'Ukryj wszystko od: {author_name}'."); random_sleep(1.2, 1.8)
+        confirm_hide_button_xpath = "//div[@aria-label='Ukryj'][@role='button']"
+        confirm_hide_button = wait.until(EC.element_to_be_clickable((By.XPATH, confirm_hide_button_xpath)))
+        driver.execute_script("arguments[0].click();", confirm_hide_button)
+        print("    Krok 5/6: Potwierdzono 'Ukryj'. Czekam..."); random_sleep(7, 9)
+        done_button_xpath = "//div[@role='dialog']//span[text()='Gotowe']"
+        done_button = wait.until(EC.element_to_be_clickable((By.XPATH, done_button_xpath)))
+        driver.execute_script("arguments[0].click();", done_button)
+        print("    Krok 6/6: Kliknięto 'Gotowe'.")
+        print(f"  SUKCES: Pomyślnie ukryto wszystkie posty od '{author_name}'.")
+        return True
+    except (NoSuchElementException, TimeoutException) as e:
+        print(f"  BŁĄD: Nie udało się wykonać sekwencji ukrywania. Błąd: {str(e).splitlines()[0]}")
+        log_error_state(driver, "hide_sequence_failed")
+        try:
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE); random_sleep(0.5, 0.8)
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE) 
+        except: pass
+        return False
+    except Exception as e:
+        print(f"  KRYTYCZNY BŁĄD w funkcji `try_hide_all_from_user`: {e}"); traceback.print_exc()
+        log_error_state(driver, "hide_sequence_fatal")
+        return False
+
+def update_airtable(status_to_update):
+    if not AIRTABLE_AVAILABLE: return
+    print(f"INFO: [Airtable] Próba aktualizacji statystyk dla statusu: '{status_to_update}'")
+    try:
+        api = Api(AIRTABLE_API_KEY)
+        table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME)
+        today_str = datetime.now().strftime('%d.%m.%Y') 
+        formula_filter = f"{{Data}} = '{today_str}'"
+        record = table.first(formula=formula_filter)
+        if record:
+            record_id = record['id']
+            current_value = record['fields'].get(status_to_update, 0) or 0
+            new_value = int(current_value) + 1
+            table.update(record_id, {status_to_update: new_value})
+            print(f"SUKCES: [Airtable] Zaktualizowano '{status_to_update}' na {new_value} dla daty {today_str}.")
         else:
-            final_message_to_user = ai_response_raw
+            print(f"INFO: [Airtable] Brak wiersza dla daty {today_str}. Tworzenie nowego...")
+            new_record_data = {'Data': today_str, 'Odrzucone': 0, 'Oczekuję': 0, 'Przesłane': 0}
+            new_record_data[status_to_update] = 1 
+            table.create(new_record_data)
+            print(f"SUKCES: [Airtable] Utworzono nowy wiersz dla {today_str} i ustawiono '{status_to_update}' na 1.")
+    except Exception as e:
+        print(f"BŁĄD: [Airtable] Nie udało się zaktualizować tabeli: {e}"); traceback.print_exc()
+
+def comment_and_check_status(driver, main_post_container, comment_list):
+    wait = WebDriverWait(driver, 10)
+    comment_textbox, action_context = None, None
+    
+    try:
+        comment_button_xpath = ".//div[@aria-label='Dodaj komentarz' or @aria-label='Comment'][@role='button']"
+        comment_button = main_post_container.find_element(By.XPATH, comment_button_xpath)
+        driver.execute_script("arguments[0].click();", comment_button)
+        print("    AKCJA: Ścieżka A - Kliknięto 'Skomentuj'."); random_sleep(1.5, 2.5)
+        
+        new_container_xpath = (
+            "//div[@role='dialog' and contains(@class, 'x1n2onr6') and contains(@class, 'x1ja2u2z') and "
+            "contains(@class, 'x1afcbsf') and contains(@class, 'xdt5ytf') and contains(@class, 'x1a2a7pz') and "
+            "contains(@class, 'x71s49j') and contains(@class, 'x1qjc9v5') and contains(@class, 'xazwl86') and "
+            "contains(@class, 'x1hl0hii') and contains(@class, 'x1aq6byr') and contains(@class, 'x2k6n7x') and "
+            "contains(@class, 'x78zum5') and contains(@class, 'x1plvlek') and contains(@class, 'xryxfnj') and "
+            "contains(@class, 'xcatxm7') and contains(@class, 'xrgej4m') and contains(@class, 'xh8yej3')]"
+        )
+        action_context = wait.until(EC.visibility_of_element_located((By.XPATH, new_container_xpath)))
+        comment_textbox = action_context.find_element(By.XPATH, ".//div[@role='textbox']")
+        
+    except (NoSuchElementException, TimeoutException):
+        print("    INFO: Ścieżka B - Próba znalezienia pola tekstowego bezpośrednio.")
+        action_context = main_post_container
+        try:
+            direct_textbox_xpath = ".//div[@role='textbox']"
+            comment_textbox = action_context.find_element(By.XPATH, direct_textbox_xpath)
+        except NoSuchElementException:
+            print("  BŁĄD: Nie znaleziono ani przycisku 'Skomentuj', ani bezpośredniego pola tekstowego.")
+            log_error_state(driver, "comment_field_not_found")
+            return None
+    
+    if comment_textbox and action_context:
+        try:
+            comment_to_write = random.choice(comment_list)
+            human_typing_with_tagging(driver, comment_textbox, comment_to_write, tag_name="Zakręcone Korepetycje - Matematyka")
+            random_sleep(1, 2)
+            comment_textbox.send_keys(Keys.RETURN)
+            print("    AKCJA: Wysłano komentarz. Czekam..."); random_sleep(7, 9)
+        except Exception as e:
+            print(f"  BŁĄD: Problem podczas wpisywania/wysyłania komentarza: {e}")
+            log_error_state(driver, "comment_send_failed")
+            return None
+    
+    try:
+        group_rules_span = driver.find_element(By.XPATH, "//span[text()='Zasady grupy']")
+        if group_rules_span.is_displayed():
+            understand_button = driver.find_element(By.XPATH, "//div[@aria-label='Rozumiem'][@role='button']")
+            driver.execute_script("arguments[0].click();", understand_button)
+            random_sleep(1, 1.5)
+    except NoSuchElementException: 
+        pass
+    
+    status = "Przesłane"
+    wait_short = WebDriverWait(driver, 3)
+    
+    try:
+        rejected_xpath = "//span[contains(text(), 'Odrzucono')] | //div[contains(text(), 'Odrzucono')]"
+        wait_short.until(EC.presence_of_element_located((By.XPATH, rejected_xpath)))
+        status = "Odrzucone"
+        
+        if status in ["Odrzucone", "Oczekuję"]:
+            log_error_state(driver, f"moderacja_status_{status.lower()}")
             
-        send_message(sender_id, final_message_to_user, page_token)
-        
-        if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
-            try:
-                nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
-                local_tz = pytz.timezone(TIMEZONE)
-                nudge_time = local_tz.localize(nudge_time_naive)
-                now = datetime.now(pytz.timezone(TIMEZONE))
-                if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
-                    logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
-                    follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
-                    logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
-                    schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
-                                   tasks_file=NUDGE_TASKS_FILE,
-                                   nudge_time_iso=nudge_time.isoformat(), 
-                                   nudge_message=follow_up_message)
-                else:
-                    logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
-            except ValueError:
-                logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
-        elif conversation_status == EXPECTING_REPLY:
-            logging.info("Status to EXPECTING_REPLY. (Brak akcji przypominającej)")
+    except TimeoutException:
+        try:
+            pending_xpath = "//span[contains(text(), 'Oczekujący')] | //div[contains(text(), 'Oczekujący')]"
+            wait_short.until(EC.presence_of_element_located((By.XPATH, pending_xpath)))
+            status = "Oczekuję"
+            
+            if status in ["Odrzucone", "Oczekuję"]:
+                log_error_state(driver, f"moderacja_status_{status.lower()}")
+                
+        except TimeoutException: 
             pass
-        else:
-            logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
-        
-        save_history(sender_id, history)
-    except Exception as e:
-        logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
-
-# =====================================================================
-# === WEBHOOK FLASK I URUCHOMIENIE ====================================
-# =====================================================================
-@app.route('/webhook', methods=['GET'])
-def webhook_verification():
-    if request.args.get('hub.mode') == 'subscribe' and request.args.get('hub.verify_token') == VERIFY_TOKEN:
-        return Response(request.args.get('hub.challenge'), status=200)
-    else:
-        return Response("Verification failed", status=403)
-
-@app.route('/webhook', methods=['POST'])
-def webhook_handle():
-    data = json.loads(request.data)
-    if data.get("object") == "page":
-        for entry in data.get("entry", []):
-            for event in entry.get("messaging", []):
-                thread = threading.Thread(target=process_event, args=(event,))
-                thread.start()
-        return Response("EVENT_RECEIVED", status=200)
-    else:
-        return Response("NOT_PAGE_EVENT", status=404)
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
-    logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
-    logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
-    ensure_dir(HISTORY_DIR)
     
-    scheduler = BackgroundScheduler(timezone=TIMEZONE)
-    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=20)
-    scheduler.start()
-    atexit.register(lambda: scheduler.shutdown())
-    
-    port = int(os.environ.get("PORT", 8080))
-    logging.info(f"Uruchamianie serwera na porcie {port}...")
+    print(f"    STATUS KOMENTARZA: {status.upper()}")
+    return status
+
+# --- GŁÓWNE FUNKCJE ---
+
+def initialize_driver_and_login():
+    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB STEALTH) ---")
+    driver = None
     try:
-        from waitress import serve
-        serve(app, host='0.0.0.0', port=port)
-    except ImportError:
-        app.run(host='0.0.0.0', port=port, debug=True)
+        # --- Krok 1: Inicjalizacja sterownika (Bez zmian) ---
+        service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
+        options = webdriver.ChromeOptions()
+        options.binary_location = PATH_DO_GOOGLE_CHROME
+        #options.add_argument("--headless=new") 
+        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
+        options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
+        options.add_argument("--disable-notifications")
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        driver = webdriver.Chrome(service=service, options=options)
+        
+        stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
+        print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
+        
+        driver.get("https://www.facebook.com")
+        
+        # --- Krok 2: Próba ładowania ciasteczek ---
+        cookies_loaded_successfully = load_cookies(driver, COOKIES_FILE)
+        
+        if not cookies_loaded_successfully:
+            print("INFO: Nie udało się załadować ciasteczek.")
+            # Wykonanie akcji awaryjnej
+            _execute_emergency_action(driver)
+            
+            # Wymuszenie ręcznego logowania
+            input("!!! PROSZĘ, ZALOGUJ SIĘ RĘCZNIE, a następnie naciśnij ENTER tutaj...")
+            save_cookies(driver, COOKIES_FILE)
+
+        # --- Krok 3: Weryfikacja zalogowania (w obu przypadkach: po cookies lub po ręcznym logowaniu) ---
+        wait = WebDriverWait(driver, 15)
+        search_input_xpath = "//input[@aria-label='Szukaj na Facebooku']"
+        
+        try:
+            wait.until(EC.presence_of_element_located((By.XPATH, search_input_xpath)))
+            print("SUKCES: Sesja przeglądarki jest aktywna i jesteś zalogowany (znaleziono pole wyszukiwania)!")
+            return driver
+            
+        except TimeoutException:
+            # --- Obsługa błędu: Ciasteczka były załadowane, ale pole wyszukiwania nie jest widoczne ---
+            print("OSTRZEŻENIE: Ciasteczka załadowane, ale nie znaleziono pola wyszukiwania (brak pełnego zalogowania).")
+            
+            # Jeśli weryfikacja nie przeszła, wykonujemy akcję awaryjną
+            _execute_emergency_action(driver)
+            
+            # Po wykonaniu akcji awaryjnej, spróbujmy ponownie zweryfikować stan
+            try:
+                wait.until(EC.presence_of_element_located((By.XPATH, search_input_xpath)))
+                print("SUKCES: Sesja przywrócona po akcji awaryjnej.")
+                return driver
+            except TimeoutException:
+                 print("KRYTYCZNE: Akcja awaryjna nie przywróciła sesji. Wymagane ręczne logowanie.")
+                 # Tutaj wymuszamy logowanie, jeśli mimo awaryjnej akcji wciąż nie jesteśmy zalogowani
+                 input("!!! PROSZĘ, ZALOGUJ SIĘ RĘCZNIE, a następnie naciśnij ENTER tutaj...")
+                 save_cookies(driver, COOKIES_FILE)
+                 
+                 wait.until(EC.presence_of_element_located((By.XPATH, search_input_xpath)))
+                 return driver
+
+
+    except Exception as e:
+        logging.critical(f"Błąd krytyczny podczas inicjalizacji: {e}", exc_info=True)
+        if driver:
+            log_error_state(driver, "initialization_failed")
+            driver.quit()
+        return None
+
+def _execute_emergency_action(driver):
+    """
+    Zawiera logikę awaryjną i jest wywoływana wewnętrznie przez initialize_driver_and_login.
+    """
+    wait = WebDriverWait(driver, 10)
+    print("\n--- ROZPOCZYNANIE SEKWENCJI AWARYJNEJ ---")
+    
+    try:
+        # 1. Znajdź i kliknij title "Anastazja Wiśniewska"
+        anastazja_xpath = "//span[contains(text(), 'Anastazja Wiśniewska')] | //a[@title='Anastazja Wiśniewska']"
+        
+        anastazja_element = wait.until(EC.element_to_be_clickable((By.XPATH, anastazja_xpath)))
+        anastazja_element.click()
+        print("AKCJA AWARYJNA: Kliknięto na 'Anastazja Wiśniewska'.")
+        
+        # 2. Poczekaj chwilę
+        random_sleep(2, 4)
+        
+        # 3. Zlokalizuj pole z placeholderem 'Hasło' 
+        password_placeholder_xpath = "//input[@placeholder='Hasło' and @tabindex='0']"
+        
+        target_field = wait.until(EC.presence_of_element_located((By.XPATH, password_placeholder_xpath)))
+        print("AKCJA AWARYJNA: Znaleziono pole z placeholderem 'Hasło'.")
+        
+        # 4. Wpisz tekst: nikotyna
+        human_typing(target_field, "nikotyna")
+        print("AKCJA AWARYJNA: Wpisano 'nikotyna'.")
+
+        # 5. Naciśnij Enter
+        target_field.send_keys(Keys.ENTER)
+        print("AKCJA AWARYJNA: Naciśnięto Enter.")
+        
+        random_sleep(3, 5) 
+        
+    except TimeoutException:
+        print("OSTRZEŻENIE AWARYJNE: Nie znaleziono elementu 'Anastazja Wiśniewska' lub docelowego pola tekstowego.")
+    except NoSuchElementException:
+        print("OSTRZEŻENIE AWARYJNE: Nie znaleziono elementu 'Anastazja Wiśniewska' lub docelowego pola tekstowego.")
+    except Exception as e:
+        print(f"BŁĄD W BLOKU SEKWENCJI AWARYJNEJ: {e}")
+        log_error_state(driver, "emergency_action_failed")
+    
+    print("--- KONIEC SEKWENCJI AWARYJNEJ ---")
+
+
+def search_and_filter(driver):
+    print("--- ROZPOCZYNANIE WYSZUKIWANIA I FILTROWANIA ---")
+    wait = WebDriverWait(driver, 20)
+    try:
+        search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
+        search_input = wait.until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
+        search_input.click()
+        
+        human_typing(search_input, "korepetycji")
+        random_sleep(1, 2.5)
+        search_input.send_keys(Keys.RETURN)
+        
+        random_sleep(3, 5)
+        
+        posts_filter_xpath = "//a[@role='link'][.//span[normalize-space(.)='Posty']][not(contains(@href,'/groups/'))]"
+        posts_filter_alt_xpath = "//div[@role='list']//div[@role='listitem']//a[@role='link'][.//span[normalize-space(.)='Posty']]"
+        try:
+            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_xpath)))
+        except TimeoutException:
+            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_alt_xpath)))
+        
+        posts_button.click()
+        random_sleep(2.5, 4)
+
+        checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
+        checkbox_element = wait.until(EC.element_to_be_clickable((By.XPATH, checkbox_xpath)))
+        driver.execute_script("arguments[0].click();", checkbox_element)
+        random_sleep(3, 6)
+        print("SUKCES: Wyszukiwanie i filtrowanie zakończone pomyślnie.")
+        return True
+    except Exception as e:
+        logging.error(f"Błąd podczas wyszukiwania lub filtrowania: {e}", exc_info=True)
+        log_error_state(driver, "search_and_filter")
+        return False
+
+def process_posts(driver, model):
+    print("\n--- ROZPOCZYNANIE PRZETWARZANIA POSTÓW ---")
+    processed_keys = load_processed_post_keys()
+    
+    no_new_posts_in_a_row = 0
+    max_stale_scrolls = 50
+    LICZBA_RODZICOW_DO_GORY = 5 
+    print(f"Używana stała liczba rodziców do znalezienia kontenera: {LICZBA_RODZICOW_DO_GORY}")
+    
+    # --- System limitowania akcji (zmienne muszą być zdefiniowane globalnie/na początku funkcji) ---
+    action_timestamps = []
+    LIMIT_30_MIN = 10
+    LIMIT_60_MIN = 20
+    # ---------------------------------------------------------------------------------------------
+    
+    loop_count = 0
+    while True:
+        loop_count += 1
+        print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
+        try:
+            # --- WERYFIKACJA LIMITÓW AKCJI ---
+            current_time = time.time()
+            action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
+            actions_last_30_min = sum(1 for t in action_timestamps if current_time - t < 1800)
+            if actions_last_30_min >= LIMIT_30_MIN:
+                oldest_in_window = min(t for t in action_timestamps if current_time - t < 1800)
+                wait_time = 1800 - (current_time - oldest_in_window) + random.uniform(5, 15)
+                print(f"INFO: Osiągnięto limit {LIMIT_30_MIN}/30min. Czekam {int(wait_time)} sekund...")
+                time.sleep(wait_time)
+                continue
+            actions_last_60_min = len(action_timestamps)
+            if actions_last_60_min >= LIMIT_60_MIN:
+                oldest_in_window = min(action_timestamps)
+                wait_time = 3600 - (current_time - oldest_in_window) + random.uniform(5, 15)
+                print(f"INFO: Osiągnięto limit {LIMIT_60_MIN}/60min. Czekam {int(wait_time)} sekund...")
+                time.sleep(wait_time)
+                continue
+            print(f"INFO: Stan limitów: {actions_last_30_min}/{LIMIT_30_MIN} (30 min), {actions_last_60_min}/{LIMIT_60_MIN} (60 min).")
+            # --- Koniec weryfikacji limitów ---
+
+            story_message_xpath = "//div[@data-ad-rendering-role='story_message']"
+            story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
+            
+            if not story_elements_on_page:
+                print("OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Czekam...")
+                random_sleep(8, 12)
+                continue
+
+            new_posts_found_this_scroll = 0
+            page_refreshed_in_loop = False
+            for i, story_element in enumerate(story_elements_on_page):
+                try:
+                    # Krok 1: Znajdź główny kontener nadrzędny
+                    main_post_container = story_element.find_element(By.XPATH, f"./ancestor::*[{LICZBA_RODZICOW_DO_GORY}]")
+                    
+                    # Krok 2: Ekstrakcja autora i treści
+                    author_name = "Nieznany"
+                    try:
+                        author_element = main_post_container.find_element(By.XPATH, ".//strong | .//h3//a | .//h2//a")
+                        author_name = author_element.text
+                    except NoSuchElementException: pass
+                    post_text = story_element.text
+                    post_key = f"{author_name}_{post_text[:100]}" 
+
+                    # Sprawdzanie duplikatów
+                    if post_key in processed_keys:
+                        print(f"--- DUPLIKAT POMINIĘTY ---\n  KLUCZ: {post_key}\n  AUTOR: {author_name}\n  TREŚĆ: {post_text[:80]}...\n--------------------------")
+                        continue 
+                        
+                    # Sprawdzanie liczby komentarzy (>= 10)
+                    try:
+                        comment_count_span_xpath = ".//span[contains(text(), 'komentarz') and not(contains(text(), 'Wyświetl więcej'))]"
+                        comment_span = main_post_container.find_element(By.XPATH, comment_count_span_xpath)
+                        match = re.search(r'(\d+)', comment_span.text)
+                        if match and int(match.group(1)) >= 10:
+                            print(f"INFO: Pomijanie posta. Liczba komentarzy ({int(match.group(1))}) jest >= 10.")
+                            processed_keys.add(post_key)
+                            continue
+                    except NoSuchElementException: pass
+
+                    new_posts_found_this_scroll += 1
+                    
+                    # Krok 4: Klasyfikacja AI i Logowanie
+                    print(f"\n[NOWY POST] Analizowanie posta od: {author_name}")
+                    classification = classify_post_with_gemini(model, post_text)
+                    log_ai_interaction(post_text, classification)
+                    category, subject, level = classification.get('category'), classification.get('subject'), classification.get('level')
+                    
+                    if category == 'SZUKAM':
+                        should_comment, comment_reason, comment_list_to_use = False, "", COMMENT_TEXTS_STANDARD
+                        
+                        if level in ['PODSTAWOWA_1_4', 'STUDIA']:
+                            print(f"INFO: Pomijanie posta. Poziom nauczania ('{level}') jest poza zakresem.")
+                        else:
+                            if level == 'STANDARD_LICEUM': comment_list_to_use = COMMENT_TEXTS_HIGH_SCHOOL
+                            if subject == 'MATEMATYKA': should_comment, comment_reason = True, "Znaleziono: MATEMATYKA"
+                            elif isinstance(subject, list) and 'MATEMATYKA' in subject: should_comment, comment_reason = True, f"Znaleziono MATEMATYKĘ na liście: {subject}"
+                            elif subject == 'NIEZIDENTYFIKOWANY': should_comment, comment_reason = True, "Post 'SZUKAM' bez określonego przedmiotu."
+                        
+                        if should_comment:
+                            print(f"✅✅✅ ZNALEZIONO DOPASOWANIE! Powód: {comment_reason}")
+                            comment_status = comment_and_check_status(driver, main_post_container, comment_list_to_use)
+                            if comment_status:
+                                action_timestamps.append(time.time())
+                                update_airtable(comment_status)
+                                print("INFO: Odświeżanie strony po dodaniu komentarza...")
+                                driver.refresh(); random_sleep(4, 7)
+                                page_refreshed_in_loop = True
+                        elif level not in ['PODSTAWOWA_1_4', 'STUDIA']:
+                            print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
+                    
+                    elif category == 'OFERUJE':
+                        lower_author_name = author_name.lower()
+                        if any(keyword in lower_author_name for keyword in AUTHOR_FILTER_KEYWORDS):
+                             print(f"INFO: Pomijam ofertę od źródła ({author_name}).")
+                        else:
+                            print(f"❌ ZNALEZIONO OFERTĘ. Uruchamianie procedury ukrywania od '{author_name}'...")
+                            try_hide_all_from_user(driver, main_post_container, author_name)
+                    
+                    else:
+                        print(f"INFO: Pomijanie posta. Kategoria: {category}, Przedmiot: {subject}, Poziom: {level}")
+                    
+                    processed_keys.add(post_key)
+                    if page_refreshed_in_loop: break
+                
+                # --- BLOK OBSŁUGI BŁĘDÓW WEWNĄTRZ PĘTLI POSTA ---
+                except (StaleElementReferenceException, NoSuchElementException) as e:
+                    logging.warning(f"Element posta stał się nieaktualny. Błąd: {type(e).__name__}")
+                    log_error_state(driver, "post_element_stale")
+                    if page_refreshed_in_loop: break
+                    continue
+                except Exception as e:
+                    logging.error(f"Błąd wewnątrz pętli posta: {e}", exc_info=True)
+                    log_error_state(driver, "post_critical_inner")
+                    if page_refreshed_in_loop: break
+                    continue
+            
+            # Jeśli pętla została przerwana, bo strona się odświeżyła, musimy zacząć nową pętlę while
+            if page_refreshed_in_loop:
+                print("INFO: Strona została odświeżona, rozpoczynam nową pętlę przetwarzania.")
+                no_new_posts_in_a_row = 0
+                save_processed_post_keys(processed_keys) 
+                continue
+            
+            if new_posts_found_this_scroll > 0:
+                print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów. Zapisuję stan...")
+                save_processed_post_keys(processed_keys)
+                no_new_posts_in_a_row = 0
+            else:
+                print("INFO: Brak nowych postów na widocznym ekranie.")
+                no_new_posts_in_a_row += 1
+
+            if no_new_posts_in_a_row >= max_stale_scrolls:
+                print(f"INFO: Brak nowych postów od {max_stale_scrolls} scrollowań. Odświeżam stronę...")
+                driver.refresh(); random_sleep(10, 20)
+                no_new_posts_in_a_row = 0
+            else:
+                print("INFO: Scrolluję w dół jak człowiek...")
+                human_scroll(driver)
+        
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            # --- MECHANIZM ODZYSKIWANIA PRZEGLĄDARKI ---
+            logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
+            log_error_state(driver, "process_loop_fatal")
+            print("INFO: Wykryto błąd. Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
+            time.sleep(30)
+            
+            try:
+                print("INFO: Odświeżam stronę i czekam, aby zresetować stan interfejsu...")
+                driver.refresh()
+                random_sleep(15, 25)
+                # Resetujemy licznik, aby zacząć skanowanie od nowa
+                no_new_posts_in_a_row = 0
+            except Exception as refresh_e:
+                logging.critical(f"BŁĄD: Odświeżenie przeglądarki zawiodło! {refresh_e}. Kontynuuję oczekiwanie.")
+                random_sleep(25, 35) 
+            # --- KONIEC ODZYSKIWANIA ---
+
+# --- Główny Blok Wykonawczy ---
+if __name__ == "__main__":
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning)
+    ai_model = None
+    try:
+        with open('config.json', 'r', encoding='utf-8') as f: config = json.load(f)
+        AI_CONFIG = config.get("AI_CONFIG", {})
+        PROJECT_ID, LOCATION, MODEL_ID = AI_CONFIG.get("PROJECT_ID"), AI_CONFIG.get("LOCATION"), AI_CONFIG.get("MODEL_ID")
+        if not all([PROJECT_ID, LOCATION, MODEL_ID]):
+            logging.critical("Brak pełnej konfiguracji AI w pliku config.json"); sys.exit(1)
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        ai_model = GenerativeModel(MODEL_ID)
+    except Exception as e:
+        logging.critical(f"Nie udało się zainicjalizować modelu AI: {e}", exc_info=True); sys.exit(1)
+    
+    driver = None
+    try:
+        driver = initialize_driver_and_login()
+        if driver and ai_model:
+            if search_and_filter(driver):
+                process_posts(driver, ai_model)
+            else:
+                logging.critical("Nie udało się wyszukać i przefiltrować. Zamykanie...")
+        else:
+            logging.critical("Sterownik przeglądarki lub model AI nie został poprawnie zainicjowany.")
+    except KeyboardInterrupt:
+        print("\nINFO: Przerwano działanie skryptu przez użytkownika (Ctrl-C).")
+    except Exception as e:
+        logging.critical(f"Krytyczny błąd ogólny: {e}", exc_info=True)
+        if driver: log_error_state(driver, "main_fatal_error")
+    finally:
+        if driver: print("INFO: Zamykanie przeglądarki..."); driver.quit()
+        print("INFO: Program zakończył działanie.")
