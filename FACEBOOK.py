@@ -32,6 +32,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException,
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains # NOWY IMPORT
 
 # --- KONFIGURACJA LOGOWANIA ---
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -77,6 +78,74 @@ SAFETY_SETTINGS = [
 ]
 
 # --- NOWE FUNKCJE POMOCNICZE ---
+def handle_final_verification(driver):
+    """
+    Obsługuje końcowy etap po awaryjnym logowaniu: powrót na FB, akceptacja cookies,
+    weryfikacja sukcesu/ekranu 2FA.
+    """
+    wait = WebDriverWait(driver, 15)
+    search_input_xpath = "//input[@aria-label='Szukaj na Facebooku']"
+    
+    print("\n--- ROZPOCZYNANIE KOŃCOWEJ WERYFIKACJI ---")
+
+    # 1. Wejdź ponownie na stronę główną Facebooka
+    driver.get("https://www.facebook.com")
+    random_sleep(3, 5)
+
+    # 2. Akceptacja ciasteczek (jeśli są)
+    try:
+        # XPATH dla przycisku akceptacji ciasteczek na FB (często role=button z konkretnym aria-label)
+        cookies_xpath = "//div[@role='button'][@aria-label='Zaakceptuj ciasteczka'] | //button[contains(text(), 'Zaakceptuj')]"
+        cookies_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, cookies_xpath)))
+        
+        human_safe_click(driver, cookies_button, "Zaakceptuj ciasteczka")
+        print("INFO: Akceptacja ciasteczek wykonana.")
+        random_sleep(2, 3)
+        
+    except (TimeoutException, NoSuchElementException):
+        print("INFO: Nie znaleziono paska akceptacji ciasteczek.")
+        pass
+
+    # 3. Sprawdzenie, czy udało się zalogować (Pole Wyszukiwania)
+    try:
+        wait.until(EC.presence_of_element_located((By.XPATH, search_input_xpath)))
+        print("SUKCES: PEŁNE ZALOGOWANIE PO AKCJI AWARYJNEJ.")
+        return True # Zalogowanie udane, kontynuujemy skrypt
+
+    except TimeoutException:
+        print("OSTRZEŻENIE: Pole wyszukiwania wciąż niewidoczne. Sprawdzam 2FA.")
+
+        # 4. Sprawdzenie ekranu weryfikacji dwuetapowej (2FA)
+        try:
+            # Szukanie tekstu z obrazka "Sprawdź powiadomienia na innym urządzeniu"
+            twofa_text_xpath = "//span[contains(text(), 'Sprawdź powiadomienia na innym urządzeniu')]"
+            twofa_screen = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, twofa_text_xpath)))
+
+            if twofa_screen.is_displayed():
+                print("--- KRYTYCZNY EKRAN 2FA WYKRYTY ---")
+                
+                # Zrzut ekranu
+                log_error_state(driver, "2FA_SCREENSHOT")
+                
+                # Kliknięcie "Spróbuj użyć innej metody"
+                other_method_xpath = "//span[contains(text(), 'Spróbuj użyć innej metody')]/ancestor::button | //span[contains(text(), 'Spróbuj użyć innej metody')]/ancestor::div[@role='button']"
+                other_method_button = driver.find_element(By.XPATH, other_method_xpath)
+                
+                human_safe_click(driver, other_method_button, "Spróbuj użyć innej metody (2FA)")
+                
+                print("INFO: Kliknięto 'Spróbuj użyć innej metody'.")
+                
+                # Zakończenie skryptu
+                print("INFO: Wykryto barierę 2FA. Kończę działanie skryptu.")
+                return False # Zalogowanie nieudane, zatrzymujemy skrypt
+
+        except (TimeoutException, NoSuchElementException):
+            print("INFO: Ekran 2FA nie został wykryty. Brak logowania i brak 2FA.")
+            pass
+
+    print("INFO: Koniec końcowej weryfikacji. Wymagane ręczne logowanie.")
+    return False # Wymuszenie ręcznego logowania
+
 def log_error_state(driver, location_name="unknown_error"):
     """Zapisuje zrzut ekranu (PNG) i pełny kod źródłowy (HTML) w przypadku błędu."""
     try:
@@ -103,6 +172,83 @@ def log_error_state(driver, location_name="unknown_error"):
     except Exception as e:
         logging.error(f"Krytyczny błąd podczas próby zapisu stanu błędu: {e}")
 
+def random_sleep(min_seconds, max_seconds):
+    time.sleep(random.uniform(min_seconds, max_seconds))
+
+
+# --- NOWA FUNKCJA DLA RUCHU MYSZY ---
+def human_move_to_element(driver, target_element):
+    """
+    Symuluje nieregularny ruch myszy do docelowego elementu.
+    Używa ActionChains.
+    """
+    try:
+        target_location = target_element.location
+        target_size = target_element.size
+        
+        # Oblicz docelowy punkt (środek elementu)
+        target_x = target_location['x'] + target_size['width'] // 2
+        target_y = target_location['y'] + target_size['height'] // 2
+        
+        actions = ActionChains(driver)
+        
+        # Tworzenie serii losowych, małych kroków
+        # Pobieramy bieżące (przybliżone) współrzędne elementu, aby skrypt wiedział, skąd startuje
+        current_x = driver.execute_script("return window.scrollX + arguments[0].getBoundingClientRect().left", target_element)
+        current_y = driver.execute_script("return window.scrollY + arguments[0].getBoundingClientRect().top", target_element)
+
+        num_steps = random.randint(5, 10)
+        
+        # Wykonaj początkowy ruch (np. 50, 50), jeśli kursor jest w nieznanym miejscu
+        actions.move_by_offset(random.randint(50, 100), random.randint(50, 100)).perform()
+        
+        for _ in range(num_steps):
+            dx = target_x - current_x
+            dy = target_y - current_y
+
+            # Losowe przesunięcie w bieżącym kroku, aby ruch nie był prostą linią
+            step_x = dx / num_steps + random.uniform(-10, 10)
+            step_y = dy / num_steps + random.uniform(-10, 10)
+            
+            actions.move_by_offset(int(step_x), int(step_y)).perform()
+            current_x += step_x
+            current_y += step_y
+            random_sleep(0.05, 0.2)
+        
+        # Ostatni, dokładny ruch do centrum elementu
+        actions.move_to_element(target_element).perform()
+        print(f"    AKCJA MYSZY: Płynnie przesunięto kursor do elementu.")
+        random_sleep(0.5, 1)
+
+    except Exception as e:
+        print(f"OSTRZEŻENIE MYSZY: Nie udało się wykonać płynnego ruchu myszy: {e}")
+        # Jeśli ruch się nie uda, kontynuujemy bez niego.
+
+
+# --- NOWA FUNKCJA DLA BEZPIECZNEGO KLIKANIA ---
+def human_safe_click(driver, element, action_description="element"):
+    """
+    Wykonuje płynny ruch myszy, próbuje standardowego kliknięcia Selenium, 
+    a w przypadku błędu (np. ElementClickIntercepted) używa JavaScript jako fallback.
+    """
+    try:
+        # 1. Płynny ruch myszy do elementu
+        human_move_to_element(driver, element)
+        
+        # 2. Próba standardowego kliknięcia Selenium (bardziej naturalne)
+        element.click()
+        print(f"    KLIK: Użyto standardowego kliknięcia dla: {action_description}")
+
+    except (StaleElementReferenceException, Exception) as e:
+        # Przechwytywanie wszystkich błędów kliknięcia (np. Intercepted, NotInteractable)
+        print(f"    KLIK OSTRZEŻENIE: Standardowe kliknięcie zawiodło dla {action_description}. Powód: {type(e).__name__}. Użycie JavaScript.")
+        
+        # 3. Kliknięcie przez JavaScript jako awaryjna metoda
+        driver.execute_script("arguments[0].click();", element)
+        print(f"    KLIK: Użyto kliknięcia JS jako fallback dla: {action_description}")
+
+    random_sleep(0.5, 1.5)
+
 
 def human_typing_with_tagging(driver, element, text, tag_name="Zakręcone Korepetycje"):
     """
@@ -117,27 +263,13 @@ def human_typing_with_tagging(driver, element, text, tag_name="Zakręcone Korepe
         before_tag = parts[0]
         after_tag_full = parts[1]
 
-        # 2. Zakładamy, że nazwa strony to wszystko do następnego znaku interpunkcyjnego lub końca zdania.
-        # W Twoim przypadku, "Zakręcone Korepetycje" jest nazwą do wpisania.
-        # Skrypt musi wiedzieć, kiedy przestać wpisywać i kliknąć.
-        
-        # Nazwa, którą wpisujemy, aby wywołać sugestię
         page_name_to_type = "Zakręcone Korepetycje"
         
-        # Znajdź pełną nazwę użytą w tekście komentarza (może być inna niż `tag_name`)
-        # np. jeśli w tekście jest "Polecam @ZakręconeKorepetycje!", to chcemy zidentyfikować "ZakręconeKorepetycje"
-        # Na razie zakładamy, że jest to zawsze "Zakręcone Korepetycje"
-        
-        # Tekst, który ma być wpisany PO tagu
-        # Znajdujemy, gdzie w oryginalnym tekście kończy się nazwa strony i bierzemy resztę
         try:
-            # Wyszukajmy nazwę strony w tekście po '@', ignorując wielkość liter
             match = re.search(re.escape(page_name_to_type), after_tag_full, re.IGNORECASE)
             if match:
-                # Bierzemy tekst, który znajduje się po znalezionej nazwie
                 text_after_tag = after_tag_full[match.end():]
             else:
-                # Jeśli z jakiegoś powodu nie znajdziemy, bierzemy wszystko po pierwszym słowie
                 text_after_tag = " ".join(after_tag_full.split(' ')[1:])
 
         except IndexError:
@@ -163,11 +295,12 @@ def human_typing_with_tagging(driver, element, text, tag_name="Zakręcone Korepe
 
         # Znajdź i kliknij sugestię
         try:
-            # Używamy `tag_name` do znalezienia sugestii, bo ona może być inna
-            # np. "Zakręcone Korepetycje - Matematyka"
             suggestion_xpath = f"//li[@role='option']//span[contains(text(), '{tag_name}')]"
             suggestion = wait.until(EC.element_to_be_clickable((By.XPATH, suggestion_xpath)))
-            suggestion.click()
+            
+            # Używamy human_safe_click do kliknięcia sugestii
+            human_safe_click(driver, suggestion, "Sugestia Tagowania")
+            
             print(f"    AKCJA: Wybrano tag dla strony '{tag_name}'.")
             random_sleep(0.5, 1)
         except (NoSuchElementException, TimeoutException):
@@ -184,9 +317,6 @@ def human_typing_with_tagging(driver, element, text, tag_name="Zakręcone Korepe
         for char in text:
             element.send_keys(char)
             random_sleep(0.05, 0.15)
-
-def random_sleep(min_seconds, max_seconds):
-    time.sleep(random.uniform(min_seconds, max_seconds))
 
 def human_typing(element, text):
     for char in text:
@@ -286,33 +416,285 @@ Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
              logging.error(f"SUROWA ODPOWIEDŹ PRZY BŁĘDZIE: {response.text}")
         return {'category': "ERROR", 'subject': None, 'level': None}
 
+
+# --- ZMODYFIKOWANE FUNKCJE GŁÓWNE ---
+
+def _execute_emergency_action(driver):
+    """
+    Zawiera logikę awaryjną z minimalnym czekaniem (agresywna próba logowania).
+    Próby 1, 2 i 3 są wykonywane niemal natychmiast po sobie.
+    """
+    # Używamy minimalnego czekania na buttony, ale ogólny timeout zostawiamy na 10s
+    wait = WebDriverWait(driver, 10) 
+    print("\n--- ROZPOCZYNANIE AGRESYWNEJ SEKWENCJI AWARYJNEJ ---")
+    
+    try:
+        # 1. Znajdź i kliknij element "Anastazja Wiśniewska"
+        anastazja_xpath = "//span[contains(text(), 'Anastazja Wiśniewska')] | //a[@title='Anastazja Wiśniewska'] | //a[contains(., 'Anastazja Wiśniewska')]"
+        anastazja_element = wait.until(EC.element_to_be_clickable((By.XPATH, anastazja_xpath)))
+        
+        human_safe_click(driver, anastazja_element, "Anastazja Wiśniewska (awaryjnie)")
+        
+        # Redukujemy opóźnienie po kliknięciu do minimum
+        random_sleep(0.5, 1) 
+        
+        # --- 2. ZLOKALIZUJ POLE Z HASŁEM (TRZY SZYBKIE PRÓBY) ---
+        target_field = None
+        
+        # Skrócony timeout dla wewnętrznych szybkich prób
+        wait_short = WebDriverWait(driver, 2) 
+
+        # PRÓBA 1: Input z placeholder='Hasło' i tabindex='0' (Strict)
+        password_xpath_strict = "//input[@placeholder='Hasło' and @tabindex='0']"
+        try:
+            target_field = wait_short.until(EC.element_to_be_clickable((By.XPATH, password_xpath_strict)))
+            print("AKCJA AWARYJNA: Znaleziono pole Hasło (Strict).")
+        except TimeoutException:
+            pass
+        
+        # PRÓBA 2: Input z placeholder='Hasło' bez tabindex (Loose)
+        if target_field is None:
+            password_xpath_loose = "//input[@placeholder='Hasło']"
+            try:
+                target_field = wait_short.until(EC.element_to_be_clickable((By.XPATH, password_xpath_loose)))
+                print("AKCJA AWARYJNA: Znaleziono pole Hasło (Loose).")
+            except TimeoutException:
+                pass
+        
+        # PRÓBA 3: FALLBACK NA OSTATNI INPUT Z TYPE='PASSWORD'
+        if target_field is None:
+            password_xpath_final_input = "//input[@type='password']"
+            try:
+                # Używamy find_elements, aby pobrać wszystkie pasujące bez czekania
+                password_inputs = driver.find_elements(By.XPATH, password_xpath_final_input)
+                
+                if password_inputs:
+                    target_field = password_inputs[-1] 
+                    # Sprawdzenie, czy element jest widoczny, bo find_elements nie sprawdza widoczności
+                    if target_field.is_displayed() and target_field.is_enabled():
+                        print("AKCJA AWARYJNA: Wybrano ostatni Input type='password' (Fallback).")
+                    else:
+                        # Jeśli ostatni jest ukryty, to jest to problem
+                        target_field = None 
+                        raise NoSuchElementException 
+                else:
+                    raise NoSuchElementException 
+            except NoSuchElementException:
+                pass
+            except Exception as e:
+                 # Inny błąd podczas sprawdzania widoczności
+                 print(f"OSTRZEŻENIE: Błąd podczas sprawdzania widoczności Fallback Inputa: {e}")
+                 pass
+        
+        # --- WERYFIKACJA KOŃCOWA ---
+        
+        if not target_field:
+             raise NoSuchElementException("Nie udało się znaleźć pola docelowego po wszystkich szybkich próbach.")
+
+        # 3. Ruch myszy przed wpisaniem
+        human_move_to_element(driver, target_field)
+
+        # 4. Wyczyść pole i wpisz tekst: nikotyna
+        target_field.clear() 
+        human_typing(target_field, "nikotyna")
+        print("AKCJA AWARYJNA: Wpisano 'nikotyna'.")
+
+        # 5. Naciśnij Enter
+        target_field.send_keys(Keys.ENTER)
+        print("AKCJA AWARYJNA: Naciśnięto Enter.")
+        
+        random_sleep(0.5, 1) # Minimalne czekanie po Enter
+        
+    except (TimeoutException, NoSuchElementException):
+        print("OSTRZEŻENIE AWARYJNE: Nie znaleziono kluczowych elementów po agresywnych próbach. Koniec akcji awaryjnej.")
+    except Exception as e:
+        print(f"BŁĄD W BLOKU SEKWENCJI AWARYJNEJ: Message: {str(e).splitlines()[0]}")
+        log_error_state(driver, "emergency_action_failed")
+    
+    print("--- KONIEC AGRESYWNEJ SEKWENCJI AWARYJNEJ ---")
+    
+
+
+def initialize_driver_and_login():
+    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB STEALTH) ---")
+    driver = None
+    try:
+        # --- Krok 1: Inicjalizacja sterownika ---
+        service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
+        options = webdriver.ChromeOptions()
+        options.binary_location = PATH_DO_GOOGLE_CHROME
+        options.add_argument("--headless=new") 
+        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
+        options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
+        options.add_argument("--disable-notifications")
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        driver = webdriver.Chrome(service=service, options=options)
+        
+        stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
+        print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
+        
+        driver.get("https://www.facebook.com")
+        
+        # --- Krok 2: Próba ładowania ciasteczek ---
+        cookies_loaded_successfully = load_cookies(driver, COOKIES_FILE)
+        
+        if not cookies_loaded_successfully:
+            print("INFO: Nie udało się załadować ciasteczek.")
+            
+            _execute_emergency_action(driver)
+            
+            # Po nieudanej akcji awaryjnej, przechodzimy do weryfikacji
+            if handle_final_verification(driver):
+                return driver # Udało się zalogować po awaryjnej akcji
+                
+            # Jeśli weryfikacja zawiodła (2FA lub wciąż brak logowania)
+            raise KeyboardInterrupt("Wymagane ręczne logowanie lub wykryto barierę 2FA.")
+
+        # --- Krok 3: Weryfikacja zalogowania po udanym załadowaniu cookies ---
+        wait = WebDriverWait(driver, 15)
+        search_input_xpath = "//input[@aria-label='Szukaj na Facebooku']"
+        
+        try:
+            wait.until(EC.presence_of_element_located((By.XPATH, search_input_xpath)))
+            print("SUKCES: Sesja przeglądarki jest aktywna i jesteś zalogowany!")
+            return driver
+            
+        except TimeoutException:
+            print("OSTRZEŻENIE: Ciasteczka załadowane, ale nie znaleziono pola wyszukiwania (brak pełnego zalogowania).")
+            
+            # --- Obsługa BŁĘDU SESJI (np. "Invalid Request") ---
+            wait_quick = WebDriverWait(driver, 3) 
+            
+            try:
+                ok_button_xpath = "//div[@role='dialog']//span[text()='OK']/ancestor::div[@role='button']"
+                ok_button = wait_quick.until(EC.element_to_be_clickable((By.XPATH, ok_button_xpath)))
+                
+                human_safe_click(driver, ok_button, "Przycisk 'OK' (błąd sesji)")
+                
+                print("INFO: Kliknięto 'OK' w oknie błędu sesji. Czekam chwilę i przechodzę do akcji awaryjnej.")
+                random_sleep(1, 2)
+                
+            except (TimeoutException, NoSuchElementException):
+                print("INFO: Błąd modalny 'Invalid Request' nie został wykryty.")
+            
+            # --- Uruchomienie AGRESYWNEJ AKCJI AWARYJNEJ ---
+            _execute_emergency_action(driver)
+            
+            # --- Przejście do OSTATECZNEJ WERYFIKACJI ---
+            if handle_final_verification(driver):
+                return driver 
+            
+            # Jeśli weryfikacja zawiodła (2FA lub wciąż brak logowania)
+            raise KeyboardInterrupt("Wykryto barierę 2FA lub wymagane ręczne logowanie.")
+
+
+    except KeyboardInterrupt as e:
+        # Obsługa przerwania rzuconego z powodu 2FA lub konieczności ręcznego logowania
+        print(f"\nINFO: Przerwano działanie: {e}")
+        # W tym miejscu chcemy, aby program zamknął driver w bloku finally
+        return None 
+        
+    except Exception as e:
+        logging.critical(f"Błąd krytyczny podczas inicjalizacji: {e}", exc_info=True)
+        if driver:
+            log_error_state(driver, "initialization_failed")
+            driver.quit()
+        return None
+
+
+def search_and_filter(driver):
+    print("--- ROZPOCZYNANIE WYSZUKIWANIA I FILTROWANIA ---")
+    wait = WebDriverWait(driver, 20)
+    try:
+        search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
+        search_input = wait.until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
+        
+        # --- RUCH MYSZY: Przed interakcją z polem wyszukiwania ---
+        human_move_to_element(driver, search_input)
+        
+        search_input.click() # Standardowe kliknięcie
+        
+        human_typing(search_input, "korepetycji")
+        random_sleep(1, 2.5)
+        search_input.send_keys(Keys.RETURN)
+        
+        random_sleep(3, 5)
+        
+        posts_filter_xpath = "//a[@role='link'][.//span[normalize-space(.)='Posty']][not(contains(@href,'/groups/'))]"
+        posts_filter_alt_xpath = "//div[@role='list']//div[@role='listitem']//a[@role='link'][.//span[normalize-space(.)='Posty']]"
+        try:
+            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_xpath)))
+        except TimeoutException:
+            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_alt_xpath)))
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA ---
+        human_safe_click(driver, posts_button, "'Posty' (filtr)")
+        
+        random_sleep(2.5, 4)
+
+        checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
+        checkbox_element = wait.until(EC.element_to_be_clickable((By.XPATH, checkbox_xpath)))
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA ---
+        human_safe_click(driver, checkbox_element, "'Najnowsze posty' (checkbox)")
+        
+        random_sleep(3, 6)
+        print("SUKCES: Wyszukiwanie i filtrowanie zakończone pomyślnie.")
+        return True
+    except Exception as e:
+        logging.error(f"Błąd podczas wyszukiwania lub filtrowania: {e}", exc_info=True)
+        log_error_state(driver, "search_and_filter")
+        return False
+
 def try_hide_all_from_user(driver, post_container_element, author_name):
     wait = WebDriverWait(driver, 10)
     print(f"  INFO: Rozpoczynanie sekwencji UKRYWANIA WSZYSTKIEGO od '{author_name}'...")
     try:
         menu_button_xpath = ".//div[@aria-label='Działania dla tego posta'][@role='button']"
         menu_button = post_container_element.find_element(By.XPATH, menu_button_xpath)
-        driver.execute_script("arguments[0].click();", menu_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, menu_button, "Menu posta (...)")
         print("    Krok 1/6: Kliknięto menu 'Działania dla tego posta'."); random_sleep(1.2, 1.8)
+        
         report_button_xpath = "//div[@role='menuitem']//span[text()='Zgłoś post']"
         report_button = wait.until(EC.element_to_be_clickable((By.XPATH, report_button_xpath)))
-        driver.execute_script("arguments[0].click();", report_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, report_button, "'Zgłoś post'")
         print("    Krok 2/6: Kliknięto 'Zgłoś post'."); random_sleep(1.2, 1.8)
+        
         dont_want_to_see_xpath = "//div[@role='dialog']//span[text()='Nie chcę tego widzieć']"
         dont_want_to_see_button = wait.until(EC.element_to_be_clickable((By.XPATH, dont_want_to_see_xpath)))
-        driver.execute_script("arguments[0].click();", dont_want_to_see_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, dont_want_to_see_button, "'Nie chcę tego widzieć'")
         print("    Krok 3/6: Kliknięto 'Nie chcę tego widzieć'."); random_sleep(1.2, 1.8)
+        
         hide_all_xpath = f"//div[@role='dialog']//span[starts-with(text(), 'Ukryj wszystko od')]"
         hide_all_button = wait.until(EC.element_to_be_clickable((By.XPATH, hide_all_xpath)))
-        driver.execute_script("arguments[0].click();", hide_all_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, hide_all_button, "'Ukryj wszystko'")
         print(f"    Krok 4/6: Kliknięto 'Ukryj wszystko od: {author_name}'."); random_sleep(1.2, 1.8)
+        
         confirm_hide_button_xpath = "//div[@aria-label='Ukryj'][@role='button']"
         confirm_hide_button = wait.until(EC.element_to_be_clickable((By.XPATH, confirm_hide_button_xpath)))
-        driver.execute_script("arguments[0].click();", confirm_hide_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, confirm_hide_button, "'Potwierdź Ukryj'")
         print("    Krok 5/6: Potwierdzono 'Ukryj'. Czekam..."); random_sleep(7, 9)
+        
         done_button_xpath = "//div[@role='dialog']//span[text()='Gotowe']"
         done_button = wait.until(EC.element_to_be_clickable((By.XPATH, done_button_xpath)))
-        driver.execute_script("arguments[0].click();", done_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, done_button, "'Gotowe'")
         print("    Krok 6/6: Kliknięto 'Gotowe'.")
         print(f"  SUKCES: Pomyślnie ukryto wszystkie posty od '{author_name}'.")
         return True
@@ -331,7 +713,6 @@ def try_hide_all_from_user(driver, post_container_element, author_name):
 
 def update_airtable(status_to_update):
     if not AIRTABLE_AVAILABLE: return
-    random_sleep(3, 5) 
     print(f"INFO: [Airtable] Próba aktualizacji statystyk dla statusu: '{status_to_update}'")
     try:
         api = Api(AIRTABLE_API_KEY)
@@ -354,6 +735,7 @@ def update_airtable(status_to_update):
     except Exception as e:
         print(f"BŁĄD: [Airtable] Nie udało się zaktualizować tabeli: {e}"); traceback.print_exc()
 
+
 def comment_and_check_status(driver, main_post_container, comment_list):
     wait = WebDriverWait(driver, 10)
     comment_textbox, action_context = None, None
@@ -361,7 +743,10 @@ def comment_and_check_status(driver, main_post_container, comment_list):
     try:
         comment_button_xpath = ".//div[@aria-label='Dodaj komentarz' or @aria-label='Comment'][@role='button']"
         comment_button = main_post_container.find_element(By.XPATH, comment_button_xpath)
-        driver.execute_script("arguments[0].click();", comment_button)
+        
+        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+        human_safe_click(driver, comment_button, "'Dodaj komentarz'")
+        
         print("    AKCJA: Ścieżka A - Kliknięto 'Skomentuj'."); random_sleep(1.5, 2.5)
         
         new_container_xpath = (
@@ -388,6 +773,9 @@ def comment_and_check_status(driver, main_post_container, comment_list):
     
     if comment_textbox and action_context:
         try:
+            # --- RUCH MYSZY: Przed wpisaniem tekstu do pola komentarza ---
+            human_move_to_element(driver, comment_textbox)
+            
             comment_to_write = random.choice(comment_list)
             human_typing_with_tagging(driver, comment_textbox, comment_to_write, tag_name="Zakręcone Korepetycje - Matematyka")
             random_sleep(1, 2)
@@ -402,11 +790,16 @@ def comment_and_check_status(driver, main_post_container, comment_list):
         group_rules_span = driver.find_element(By.XPATH, "//span[text()='Zasady grupy']")
         if group_rules_span.is_displayed():
             understand_button = driver.find_element(By.XPATH, "//div[@aria-label='Rozumiem'][@role='button']")
-            driver.execute_script("arguments[0].click();", understand_button)
+            
+            # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA JS ---
+            human_safe_click(driver, understand_button, "'Rozumiem' (zasady)")
+            
             random_sleep(1, 1.5)
     except NoSuchElementException: 
         pass
     
+    # ... (logika sprawdzania statusu) ...
+
     status = "Przesłane"
     wait_short = WebDriverWait(driver, 3)
     
@@ -433,81 +826,7 @@ def comment_and_check_status(driver, main_post_container, comment_list):
     print(f"    STATUS KOMENTARZA: {status.upper()}")
     return status
 
-# --- GŁÓWNE FUNKCJE ---
-
-def initialize_driver_and_login():
-    print("\n--- START SKRYPTU: INICJALIZACJA PRZEGLĄDARKI (TRYB STEALTH) ---")
-    driver = None
-    try:
-        service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
-        options = webdriver.ChromeOptions()
-        options.binary_location = PATH_DO_GOOGLE_CHROME
-        options.add_argument("--headless=new") 
-        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-        options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
-        options.add_argument("--disable-notifications")
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
-
-        driver = webdriver.Chrome(service=service, options=options)
-        
-        stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
-        print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
-        
-        driver.get("https://www.facebook.com")
-        
-        if not load_cookies(driver, COOKIES_FILE):
-            input("!!! PROSZĘ, ZALOGUJ SIĘ RĘCZNIE, a następnie naciśnij ENTER tutaj...")
-            save_cookies(driver, COOKIES_FILE)
-
-        wait = WebDriverWait(driver, 15)
-        wait.until(EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Szukaj na Facebooku']")))
-        print("SUKCES: Sesja przeglądarki jest aktywna i jesteś zalogowany!")
-        return driver
-    except Exception as e:
-        logging.critical(f"Błąd krytyczny podczas inicjalizacji: {e}", exc_info=True)
-        if driver:
-            log_error_state(driver, "initialization_failed")
-            driver.quit()
-        return None
-
-def search_and_filter(driver):
-    print("--- ROZPOCZYNANIE WYSZUKIWANIA I FILTROWANIA ---")
-    wait = WebDriverWait(driver, 20)
-    try:
-        search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
-        search_input = wait.until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
-        search_input.click()
-        
-        human_typing(search_input, "korepetycji")
-        random_sleep(1, 2.5)
-        search_input.send_keys(Keys.RETURN)
-        
-        random_sleep(3, 5)
-        
-        posts_filter_xpath = "//a[@role='link'][.//span[normalize-space(.)='Posty']][not(contains(@href,'/groups/'))]"
-        posts_filter_alt_xpath = "//div[@role='list']//div[@role='listitem']//a[@role='link'][.//span[normalize-space(.)='Posty']]"
-        try:
-            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_xpath)))
-        except TimeoutException:
-            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_alt_xpath)))
-        
-        posts_button.click()
-        random_sleep(2.5, 4)
-
-        checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
-        checkbox_element = wait.until(EC.element_to_be_clickable((By.XPATH, checkbox_xpath)))
-        driver.execute_script("arguments[0].click();", checkbox_element)
-        random_sleep(3, 6)
-        print("SUKCES: Wyszukiwanie i filtrowanie zakończone pomyślnie.")
-        return True
-    except Exception as e:
-        logging.error(f"Błąd podczas wyszukiwania lub filtrowania: {e}", exc_info=True)
-        log_error_state(driver, "search_and_filter")
-        return False
+# ... (Funkcja process_posts i blok __main__ pozostają bez zmian) ...
 
 def process_posts(driver, model):
     print("\n--- ROZPOCZYNANIE PRZETWARZANIA POSTÓW ---")
@@ -518,15 +837,10 @@ def process_posts(driver, model):
     LICZBA_RODZICOW_DO_GORY = 5 
     print(f"Używana stała liczba rodziców do znalezienia kontenera: {LICZBA_RODZICOW_DO_GORY}")
     
-    # --- NOWE ZMIENNE DLA RESETU ---
-    MAX_NO_CONTENT_WARNINGS = 10
-    no_content_warning_count = 0
-    # --- KONIEC NOWYCH ZMIENNYCH ---
-
     # --- System limitowania akcji (zmienne muszą być zdefiniowane globalnie/na początku funkcji) ---
     action_timestamps = []
-    LIMIT_30_MIN = 6
-    LIMIT_60_MIN = 8
+    LIMIT_30_MIN = 10
+    LIMIT_60_MIN = 20
     # ---------------------------------------------------------------------------------------------
     
     loop_count = 0
@@ -534,7 +848,7 @@ def process_posts(driver, model):
         loop_count += 1
         print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
         try:
-            # --- WERYFIKACJA LIMITÓW AKCJI (pozostaje bez zmian) ---
+            # --- WERYFIKACJA LIMITÓW AKCJI ---
             current_time = time.time()
             action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
             actions_last_30_min = sum(1 for t in action_timestamps if current_time - t < 1800)
@@ -558,34 +872,13 @@ def process_posts(driver, model):
             story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
             
             if not story_elements_on_page:
-                # --- NOWA LOGIKA DLA BRAKU TREŚCI POSTÓW ---
                 print("OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Czekam...")
-                no_content_warning_count += 1
-                
-                if no_content_warning_count >= MAX_NO_CONTENT_WARNINGS:
-                    print(f"🔥🔥🔥 OSIĄGNIĘTO LIMIT ({MAX_NO_CONTENT_WARNINGS}) OSTRZEŻEŃ BRAKU TREŚCI! WYKONUJĘ PEŁNY RESET STEROWNIKA. 🔥🔥🔥")
-                    # Zapisujemy stan przed resetem
-                    save_processed_post_keys(processed_keys)
-                    
-                    # Rzucamy wyjątek, aby przejść do bloku 'except' na dole i uruchomić reset
-                    raise Exception("Wymuszony reset sterownika z powodu ciągłego braku treści postów.")
-                
-                # Jeśli nie osiągnięto limitu, po prostu czekamy i kontynuujemy
                 random_sleep(8, 12)
                 continue
-            else:
-                # Jeśli znaleziono posty, resetujemy licznik ostrzeżeń
-                no_content_warning_count = 0
-                
-            # ... Reszta kodu przetwarzania postów ...
-            
-            # --- Wewnątrz pętli for (reszta logiki przetwarzania postów pozostaje bez zmian) ---
+
             new_posts_found_this_scroll = 0
             page_refreshed_in_loop = False
             for i, story_element in enumerate(story_elements_on_page):
-                # ... (wszystkie kroki Krok 1 do końca pętli for pozostają niezmienione) ...
-                
-                # --- TUTAJ CAŁY KOD Z PĘTLI FOR ZOSTAW BEZ ZMIAN ---
                 try:
                     # Krok 1: Znajdź główny kontener nadrzędny
                     main_post_container = story_element.find_element(By.XPATH, f"./ancestor::*[{LICZBA_RODZICOW_DO_GORY}]")
@@ -643,7 +936,6 @@ def process_posts(driver, model):
                                 print("INFO: Odświeżanie strony po dodaniu komentarza...")
                                 driver.refresh(); random_sleep(4, 7)
                                 page_refreshed_in_loop = True
-                                no_content_warning_count = 0 # Jeśli był komentarz, resetujemy licznik ostrzeżeń!
                         elif level not in ['PODSTAWOWA_1_4', 'STUDIA']:
                             print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
                     
@@ -654,7 +946,6 @@ def process_posts(driver, model):
                         else:
                             print(f"❌ ZNALEZIONO OFERTĘ. Uruchamianie procedury ukrywania od '{author_name}'...")
                             try_hide_all_from_user(driver, main_post_container, author_name)
-                            no_content_warning_count = 0 # Jeśli była akcja ukrywania, resetujemy licznik ostrzeżeń!
                     
                     else:
                         print(f"INFO: Pomijanie posta. Kategoria: {category}, Przedmiot: {subject}, Poziom: {level}")
@@ -674,16 +965,12 @@ def process_posts(driver, model):
                     if page_refreshed_in_loop: break
                     continue
             
-            # --- Obsługa po pętli for ---
-            
+            # Jeśli pętla została przerwana, bo strona się odświeżyła, musimy zacząć nową pętlę while
             if page_refreshed_in_loop:
                 print("INFO: Strona została odświeżona, rozpoczynam nową pętlę przetwarzania.")
                 no_new_posts_in_a_row = 0
                 save_processed_post_keys(processed_keys) 
-                # UWAGA: no_content_warning_count jest już zresetowany w bloku komentarza/ukrywania
                 continue
-            
-            # ... (Logika scrollowania i brak nowych postów) ...
             
             if new_posts_found_this_scroll > 0:
                 print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów. Zapisuję stan...")
@@ -703,45 +990,23 @@ def process_posts(driver, model):
         
         except KeyboardInterrupt:
             break
-            
         except Exception as e:
-            # --- BLOK OBSŁUGI KRYTYCZNEGO BŁĘDU (Również ten wymuszony reset!) ---
-            
-            # Sprawdzamy, czy to był błąd wymuszonego resetu
-            is_forced_reset = "Wymuszony reset sterownika" in str(e)
-            
-            if is_forced_reset:
-                 logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI: {str(e).splitlines()[0]} - WYKONUJĘ PEŁNY RESET DRIVERA")
-            else:
-                 logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
-                 log_error_state(driver, "process_loop_fatal")
-            
+            # --- MECHANIZM ODZYSKIWANIA PRZEGLĄDARKI ---
+            logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
+            log_error_state(driver, "process_loop_fatal")
             print("INFO: Wykryto błąd. Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
             time.sleep(30)
             
-            # 1. Zamykamy stary sterownik
-            if driver:
-                try: driver.quit(); print("INFO: Stary sterownik przeglądarki zamknięty.")
-                except: pass
-            
-            # 2. Inicjalizujemy nowy sterownik
-            print("INFO: Inicjalizuję nowy sterownik przeglądarki i ponawiam logowanie...")
-            driver = initialize_driver_and_login() # Ta funkcja musi być dostępna globalnie
-            
-            if driver:
-                # 3. Wracamy do miejsca wyszukiwania i filtrowania
-                if search_and_filter(driver):
-                    print("INFO: Pomyślnie zresetowano sterownik, zalogowano i przywrócono kontekst wyszukiwania.")
-                    # 4. Resetujemy liczniki po udanym resecie, aby kontynuować od początku pętli while
-                    no_new_posts_in_a_row = 0
-                    no_content_warning_count = 0 
-                else:
-                    logging.critical("BŁĄD: Reset sterownika udany, ale nie udało się przywrócić kontekstu wyszukiwania. Koniec programu.")
-                    raise Exception("Niepowodzenie po resecie sterownika.")
-            else:
-                logging.critical("BŁĄD: Pełny reset sterownika i ponowna inicjalizacja zakończone niepowodzeniem. Koniec programu.")
-                raise Exception("Niepowodzenie po resecie sterownika.")
-            # --- KONIEC BLOKU KRYTYCZNEGO ---
+            try:
+                print("INFO: Odświeżam stronę i czekam, aby zresetować stan interfejsu...")
+                driver.refresh()
+                random_sleep(15, 25)
+                # Resetujemy licznik, aby zacząć skanowanie od nowa
+                no_new_posts_in_a_row = 0
+            except Exception as refresh_e:
+                logging.critical(f"BŁĄD: Odświeżenie przeglądarki zawiodło! {refresh_e}. Kontynuuję oczekiwanie.")
+                random_sleep(25, 35) 
+            # --- KONIEC ODZYSKIWANIA ---
 
 # --- Główny Blok Wykonawczy ---
 if __name__ == "__main__":
