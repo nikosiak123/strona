@@ -12,8 +12,9 @@ from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
-from pyairtable import Api
 import errno
+# Zamieniono Airtable na SQLite
+from database import DatabaseTable
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -45,21 +46,13 @@ PROJECT_ID = AI_CONFIG.get("PROJECT_ID")
 LOCATION = AI_CONFIG.get("LOCATION")
 MODEL_ID = AI_CONFIG.get("MODEL_ID")
 
-AIRTABLE_API_KEY = AIRTABLE_CONFIG.get("API_KEY")
-AIRTABLE_BASE_ID = AIRTABLE_CONFIG.get("BASE_ID")
-CLIENTS_TABLE_NAME = AIRTABLE_CONFIG.get("CLIENTS_TABLE_NAME")
-
-airtable_api = None
-clients_table = None
-if all([AIRTABLE_API_KEY, AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME]):
-    try:
-        airtable_api = Api(AIRTABLE_API_KEY)
-        clients_table = airtable_api.table(AIRTABLE_BASE_ID, CLIENTS_TABLE_NAME)
-        print("--- Połączenie z Airtable OK.")
-    except Exception as e:
-        print(f"!!! BŁĄD: Nie można połączyć się z Airtable: {e}")
-else:
-    print("!!! OSTRZEŻENIE: Brak pełnej konfiguracji Airtable w config.json.")
+# Inicjalizacja bazy danych SQLite (zastąpienie Airtable)
+try:
+    clients_table = DatabaseTable('Klienci')
+    print("--- Połączenie z bazą danych SQLite OK.")
+except Exception as e:
+    print(f"!!! BŁĄD: Nie można połączyć się z bazą danych: {e}")
+    clients_table = None
 
 # === NOWE STAŁE DLA SYSTEMU PRZYPOMNIEŃ ===
 NUDGE_TASKS_FILE = "nudge_tasks.json"

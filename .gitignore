@@ -1,0 +1,21 @@
+# SQLite database
+korki.db
+korki.db-journal
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Config files with secrets
+config.json
+
+# Conversation history
+conversation_store/
+
+# Nudge tasks
+nudge_tasks.json
+
+# IDE
+.vscode/
+.idea/
