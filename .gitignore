@@ -19,3 +19,7 @@ nudge_tasks.json
 # IDE
 .vscode/
 .idea/
+
+# Facebook stats database
+facebook_stats.db
+facebook_stats.db-journal

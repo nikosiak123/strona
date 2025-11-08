@@ -11,12 +11,14 @@ import logging
 import random
 from datetime import datetime
 
-# --- IMPORTY DLA AIRTABLE, VERTEX AI I STEALTH ---
+# --- IMPORTY DLA BAZY DANYCH, VERTEX AI I STEALTH ---
+# Zamieniono Airtable na SQLite
 try:
-    from pyairtable import Api
-    AIRTABLE_AVAILABLE = True
+    from database_stats import update_stats
+    DATABASE_AVAILABLE = True
 except ImportError:
-    AIRTABLE_AVAILABLE = False
+    DATABASE_AVAILABLE = False
+    print("OSTRZEŻENIE: Nie można załadować database_stats.py")
 
 import vertexai
 from vertexai.generative_models import (
@@ -41,9 +43,7 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 PATH_DO_GOOGLE_CHROME = os.environ.get('CHROME_BIN_PATH', '/usr/bin/google-chrome')
 PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/usr/local/bin/chromedriver')
 
-AIRTABLE_API_KEY = "patcSdupvwJebjFDo.7e15a93930d15261989844687bcb15ac5c08c84a29920c7646760bc6f416146d"
-AIRTABLE_BASE_ID = "appTjrMTVhYBZDPw9"
-AIRTABLE_TABLE_NAME = "Statystyki"
+# Usunięto konfigurację Airtable - teraz używamy lokalnej bazy SQLite
 
 # --- STAŁE ---
 COOKIES_FILE = "cookies.pkl"
@@ -711,29 +711,17 @@ def try_hide_all_from_user(driver, post_container_element, author_name):
         log_error_state(driver, "hide_sequence_fatal")
         return False
 
-def update_airtable(status_to_update):
-    if not AIRTABLE_AVAILABLE: return
-    print(f"INFO: [Airtable] Próba aktualizacji statystyk dla statusu: '{status_to_update}'")
+def update_database_stats(status_to_update):
+    """Aktualizuje statystyki w lokalnej bazie danych SQLite."""
+    if not DATABASE_AVAILABLE: 
+        print("OSTRZEŻENIE: Baza danych niedostępna, pomijam aktualizację statystyk.")
+        return
+    print(f"INFO: [DB] Próba aktualizacji statystyk dla statusu: '{status_to_update}'")
     try:
-        api = Api(AIRTABLE_API_KEY)
-        table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE_NAME)
-        today_str = datetime.now().strftime('%d.%m.%Y') 
-        formula_filter = f"{{Data}} = '{today_str}'"
-        record = table.first(formula=formula_filter)
-        if record:
-            record_id = record['id']
-            current_value = record['fields'].get(status_to_update, 0) or 0
-            new_value = int(current_value) + 1
-            table.update(record_id, {status_to_update: new_value})
-            print(f"SUKCES: [Airtable] Zaktualizowano '{status_to_update}' na {new_value} dla daty {today_str}.")
-        else:
-            print(f"INFO: [Airtable] Brak wiersza dla daty {today_str}. Tworzenie nowego...")
-            new_record_data = {'Data': today_str, 'Odrzucone': 0, 'Oczekuję': 0, 'Przesłane': 0}
-            new_record_data[status_to_update] = 1 
-            table.create(new_record_data)
-            print(f"SUKCES: [Airtable] Utworzono nowy wiersz dla {today_str} i ustawiono '{status_to_update}' na 1.")
+        update_stats(status_to_update)
     except Exception as e:
-        print(f"BŁĄD: [Airtable] Nie udało się zaktualizować tabeli: {e}"); traceback.print_exc()
+        print(f"BŁĄD: [DB] Nie udało się zaktualizować statystyk: {e}")
+        traceback.print_exc()
 
 
 def comment_and_check_status(driver, main_post_container, comment_list):
@@ -932,7 +920,7 @@ def process_posts(driver, model):
                             comment_status = comment_and_check_status(driver, main_post_container, comment_list_to_use)
                             if comment_status:
                                 action_timestamps.append(time.time())
-                                update_airtable(comment_status)
+                                update_database_stats(comment_status)
                                 print("INFO: Odświeżanie strony po dodaniu komentarza...")
                                 driver.refresh(); random_sleep(4, 7)
                                 page_refreshed_in_loop = True
@@ -998,13 +986,20 @@ def process_posts(driver, model):
             time.sleep(30)
             
             try:
-                print("INFO: Odświeżam stronę i czekam, aby zresetować stan interfejsu...")
-                driver.refresh()
-                random_sleep(15, 25)
-                # Resetujemy licznik, aby zacząć skanowanie od nowa
-                no_new_posts_in_a_row = 0
-            except Exception as refresh_e:
-                logging.critical(f"BŁĄD: Odświeżenie przeglądarki zawiodło! {refresh_e}. Kontynuuję oczekiwanie.")
+                print("INFO: PEŁNY RESET - Wracam na stronę główną i ponawiam wyszukiwanie...")
+                # Zamiast driver.refresh(), robimy pełny reset
+                driver.get("https://www.facebook.com")
+                random_sleep(3, 5)
+                
+                # Ponowne wyszukiwanie i filtrowanie
+                if search_and_filter(driver):
+                    print("SUKCES: Ponowne wyszukiwanie zakończone. Kontynuuję skanowanie.")
+                    no_new_posts_in_a_row = 0
+                else:
+                    print("BŁĄD: Ponowne wyszukiwanie zawiodło. Próbuję jeszcze raz za chwilę...")
+                    random_sleep(15, 25)
+            except Exception as reset_e:
+                logging.critical(f"BŁĄD: Pełny reset przeglądarki zawiódł! {reset_e}. Kontynuuję oczekiwanie.")
                 random_sleep(25, 35) 
             # --- KONIEC ODZYSKIWANIA ---
 
