@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'korki.db')
+# Wspólna baza danych dla bota i backendu
+DB_PATH = '/home/nikodnaj/korki.db'
 
 def get_connection():
     """Zwraca połączenie z bazą danych."""
