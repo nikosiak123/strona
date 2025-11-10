@@ -201,7 +201,6 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
         # === ZMIANA NAZW PÓL JEST TUTAJ ===
         new_client_data = {
             "ClientID": psid,
-            "Źródło": "Messenger Bot"
         }
         if first_name:
             new_client_data["ImięKlienta"] = first_name # Zmieniono z "Imię"
