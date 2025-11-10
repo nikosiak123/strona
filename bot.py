@@ -450,7 +450,7 @@ def process_event(event_payload):
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
-                reservation_link = f"https://zakręcone-korepetycje.pl/?clientID={client_id}"
+                reservation_link = f"https://zakręcone-korepetycje.pl/rezerwacja-testowa.html?clientID={client_id}"
                 final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nProszę wybrać wolny termin. Zarezerwowana lekcja będzie automatycznie potwierdzona. Lekcję testową należy opłacić do 5 minut od połączenia się z korepetytorem. Termin lekcji można odwołać lub przełożyć używajac panelu klienta, do którego dostęp dostaną Państwo po rezerwacji lub ewentualnie kontaktująć się z nami. Link jest personalny proszę nie udostępniać go nikomu. Udostępnienie linku jest równoważne z udostępnieniem dostępu do zarządzania lekcjami. BARDZO PROSIMY O ODWOŁYWANIE lekcji w przypadku rozmyślenia się. W troscę o naszych klientów nie wymagamy płatności przed połączeniem, prosimy o nienadużywanie tego (;"
             else:
                 final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
