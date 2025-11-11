@@ -831,6 +831,11 @@ def process_posts(driver, model):
     LIMIT_60_MIN = 20
     # ---------------------------------------------------------------------------------------------
     
+    # --- System liczenia błędów dla twardego resetu ---
+    consecutive_errors = 0
+    MAX_CONSECUTIVE_ERRORS = 3
+    # ---------------------------------
+    
     loop_count = 0
     while True:
         loop_count += 1
@@ -979,28 +984,61 @@ def process_posts(driver, model):
         except KeyboardInterrupt:
             break
         except Exception as e:
-            # --- MECHANIZM ODZYSKIWANIA PRZEGLĄDARKI ---
+            # --- MECHANIZM LICZENIA BŁĘDÓW I TWARDEGO RESETU ---
+            consecutive_errors += 1
             logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
             log_error_state(driver, "process_loop_fatal")
-            print("INFO: Wykryto błąd. Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
+            print(f"INFO: Wykryto błąd ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
             time.sleep(30)
             
-            try:
-                print("INFO: PEŁNY RESET - Wracam na stronę główną i ponawiam wyszukiwanie...")
-                # Zamiast driver.refresh(), robimy pełny reset
-                driver.get("https://www.facebook.com")
-                random_sleep(3, 5)
-                
-                # Ponowne wyszukiwanie i filtrowanie
-                if search_and_filter(driver):
-                    print("SUKCES: Ponowne wyszukiwanie zakończone. Kontynuuję skanowanie.")
-                    no_new_posts_in_a_row = 0
-                else:
-                    print("BŁĄD: Ponowne wyszukiwanie zawiodło. Próbuję jeszcze raz za chwilę...")
-                    random_sleep(15, 25)
-            except Exception as reset_e:
-                logging.critical(f"BŁĄD: Pełny reset przeglądarki zawiódł! {reset_e}. Kontynuuję oczekiwanie.")
-                random_sleep(25, 35) 
+            # Jeśli liczba błędów osiągnęła limit, wykonaj twardy reset
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                print(f"\n⚠️ UWAGA: {consecutive_errors} błędów pod rząd! Wykonuję PEŁNY TWARDY RESET...\n")
+                try:
+                    print("INFO: TWARDY RESET - Zamykam i reinicjalizuję przeglądarkę...")
+                    if driver:
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                    
+                    # Krótka przerwa przed ponownym zalogowaniem
+                    random_sleep(5, 10)
+                    
+                    # Ponowna inicjalizacja i logowanie
+                    driver = initialize_driver_and_login()
+                    if driver:
+                        if search_and_filter(driver):
+                            print("SUKCES: Twardy reset zakończony. Wznawiam skanowanie...")
+                            consecutive_errors = 0  # Reset licznika
+                            no_new_posts_in_a_row = 0
+                        else:
+                            print("BŁĄD: Ponowne wyszukiwanie po twardym resecie zawiodło.")
+                            random_sleep(15, 25)
+                    else:
+                        print("BŁĄD: Nie udało się reinicjalizować przeglądarki.")
+                        break
+                except Exception as hard_reset_e:
+                    logging.critical(f"BŁĄD: Twardy reset przeglądarki zawiódł! {hard_reset_e}.")
+                    print("KRYTYCZNY BŁĄD: Twardy reset nie powiódł się. Kończę program.")
+                    break
+            else:
+                # Normalny reset (miękki) - bez reinicjalizacji przeglądarki
+                try:
+                    print("INFO: MIĘKKI RESET - Wracam na stronę główną i ponawiam wyszukiwanie...")
+                    driver.get("https://www.facebook.com")
+                    random_sleep(3, 5)
+                    
+                    # Ponowne wyszukiwanie i filtrowanie
+                    if search_and_filter(driver):
+                        print("SUKCES: Ponowne wyszukiwanie zakończone. Kontynuuję skanowanie.")
+                        no_new_posts_in_a_row = 0
+                    else:
+                        print("BŁĄD: Ponowne wyszukiwanie zawiodło. Próbuję jeszcze raz za chwilę...")
+                        random_sleep(15, 25)
+                except Exception as reset_e:
+                    logging.critical(f"BŁĄD: Miękki reset zawiódł! {reset_e}. Kontynuuję oczekiwanie.")
+                    random_sleep(25, 35)
             # --- KONIEC ODZYSKIWANIA ---
 
 # --- Główny Blok Wykonawczy ---
