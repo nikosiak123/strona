@@ -5,7 +5,8 @@ from typing import Optional, List, Dict, Any
 import os
 
 # Wspólna baza danych dla bota i backendu
-DB_PATH = '/home/nikodnaj/korki.db'
+# Możesz ustawić zmienną środowiskową KORKI_DB_PATH lub użyje domyślnej
+DB_PATH = os.environ.get('KORKI_DB_PATH', '/home/nikodnaj/korki.db')
 
 def get_connection():
     """Zwraca połączenie z bazą danych."""
