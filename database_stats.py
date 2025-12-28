@@ -28,6 +28,7 @@ def init_stats_database():
             Odrzucone INTEGER DEFAULT 0,
             Oczekuje INTEGER DEFAULT 0,
             Przeslane INTEGER DEFAULT 0,
+            LastCommentTime TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -48,6 +49,7 @@ def update_stats(status_field: str):
         cursor = conn.cursor()
         
         today_str = datetime.now().strftime('%d.%m.%Y')
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         # Sprawdź czy rekord istnieje
         cursor.execute("SELECT * FROM Statystyki WHERE Data = ?", [today_str])
@@ -57,16 +59,25 @@ def update_stats(status_field: str):
             # Aktualizuj istniejący rekord
             current_value = record[status_field] or 0
             new_value = int(current_value) + 1
-            cursor.execute(f"UPDATE Statystyki SET {status_field} = ? WHERE Data = ?", 
-                         [new_value, today_str])
+            update_fields = f"{status_field} = ?"
+            if status_field == "Przeslane":
+                update_fields += ", LastCommentTime = ?"
+                cursor.execute(f"UPDATE Statystyki SET {update_fields} WHERE Data = ?", 
+                             [new_value, now_str, today_str])
+            else:
+                cursor.execute(f"UPDATE Statystyki SET {update_fields} WHERE Data = ?", 
+                             [new_value, today_str])
             print(f"SUKCES: [DB] Zaktualizowano '{status_field}' na {new_value} dla daty {today_str}.")
         else:
             # Utwórz nowy rekord
             cursor.execute("""
-                INSERT INTO Statystyki (Data, Odrzucone, Oczekuje, Przeslane) 
-                VALUES (?, 0, 0, 0)
+                INSERT INTO Statystyki (Data, Odrzucone, Oczekuje, Przeslane, LastCommentTime) 
+                VALUES (?, 0, 0, 0, NULL)
             """, [today_str])
-            cursor.execute(f"UPDATE Statystyki SET {status_field} = 1 WHERE Data = ?", [today_str])
+            if status_field == "Przeslane":
+                cursor.execute(f"UPDATE Statystyki SET {status_field} = 1, LastCommentTime = ? WHERE Data = ?", [now_str, today_str])
+            else:
+                cursor.execute(f"UPDATE Statystyki SET {status_field} = 1 WHERE Data = ?", [today_str])
             print(f"SUKCES: [DB] Utworzono nowy wiersz dla {today_str} i ustawiono '{status_field}' na 1.")
         
         conn.commit()
@@ -78,6 +89,19 @@ def update_stats(status_field: str):
         import traceback
         traceback.print_exc()
         return False
+
+def get_stats():
+    """Pobiera wszystkie statystyki."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM Statystyki ORDER BY Data DESC")
+        records = cursor.fetchall()
+        conn.close()
+        return [dict(record) for record in records]
+    except Exception as e:
+        print(f"BŁĄD: [DB] Nie udało się pobrać statystyk: {e}")
+        return []
 
 # Inicjalizacja przy imporcie
 if not os.path.exists(DB_PATH):

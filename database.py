@@ -102,6 +102,17 @@ def init_database():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rezerwacje_token ON Rezerwacje(ManagementToken)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_stale_klient ON StaleRezerwacje(Klient_ID)')
     
+    # Tabela dla statystyk Facebooka
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS FacebookStats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            posts_commented INTEGER DEFAULT 0,
+            last_comment_time TEXT
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_facebook_date ON FacebookStats(date)')
+    
     conn.commit()
     conn.close()
     print(f"✓ Baza danych zainicjalizowana: {DB_PATH}")
@@ -366,6 +377,20 @@ class DatabaseTable:
         """Aktualizuje wiele rekordów naraz."""
         for record in records:
             self.update(record['id'], record['fields'])
+    
+    def update_facebook_stats(self, date: str, increment_posts: int = 0, last_time: str = None):
+        """Aktualizuje statystyki Facebooka."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO FacebookStats (date, posts_commented, last_comment_time)
+            VALUES (?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                posts_commented = posts_commented + ?,
+                last_comment_time = COALESCE(?, last_comment_time)
+        ''', [date, increment_posts, last_time, increment_posts, last_time])
+        conn.commit()
+        conn.close()
 
 
 # Inicjalizacja przy imporcie

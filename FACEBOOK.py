@@ -20,6 +20,8 @@ except ImportError:
     DATABASE_AVAILABLE = False
     print("OSTRZEŻENIE: Nie można załadować database_stats.py")
 
+from database import DatabaseTable
+
 import vertexai
 from vertexai.generative_models import (
     GenerativeModel, Part, Content, GenerationConfig,
@@ -812,6 +814,15 @@ def comment_and_check_status(driver, main_post_container, comment_list):
             pass
     
     print(f"    STATUS KOMENTARZA: {status.upper()}")
+    
+    # Aktualizuj statystyki jeśli komentarz przesłany
+    if status == "Przesłane" and DATABASE_AVAILABLE:
+        from datetime import datetime
+        today = datetime.now().strftime('%Y-%m-%d')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Użyj database_stats jeśli dostępne
+        update_stats(today, 1, now)
+    
     return status
 
 # ... (Funkcja process_posts i blok __main__ pozostają bez zmian) ...
