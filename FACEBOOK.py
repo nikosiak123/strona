@@ -48,7 +48,7 @@ PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/usr/local/
 # Usunięto konfigurację Airtable - teraz używamy lokalnej bazy SQLite
 
 # --- STAŁE ---
-COOKIES_FILE = "cookies.pkl"
+COOKIES_FILE = "anastazja_cookies.json"
 PROCESSED_POSTS_FILE = "processed_posts_db.pkl"
 AI_LOG_FILE = "ai_analysis_log.txt"
 ERROR_SCREENSHOTS_DIR = "debug_logs"
@@ -344,14 +344,14 @@ def log_ai_interaction(post_text, ai_response):
 
 def save_cookies(driver, file_path):
     try:
-        with open(file_path, 'wb') as file: pickle.dump(driver.get_cookies(), file)
+        with open(file_path, 'w') as file: json.dump(driver.get_cookies(), file)
     except Exception as e: logging.error(f"Nie udało się zapisać ciasteczek: {e}")
 
 def load_cookies(driver, file_path):
     if not os.path.exists(file_path): return False
     try:
-        with open(file_path, 'rb') as file:
-            cookies = pickle.load(file)
+        with open(file_path, 'r') as file:
+            cookies = json.load(file)
             if not cookies: return False
             driver.get("https://www.facebook.com"); random_sleep(1, 2)
             for cookie in cookies:
