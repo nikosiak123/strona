@@ -535,10 +535,15 @@ def initialize_driver_and_login():
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
 
-        driver = webdriver.Chrome(service=service, options=options)
-        
-        stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
-        print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
+        try:
+            driver = webdriver.Chrome(service=service, options=options)
+            
+            stealth(driver, languages=["pl-PL", "pl"], vendor="Google Inc.", platform="Win32", webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine", fix_hairline=True)
+            print("SUKCES: Przeglądarka uruchomiona w trybie stealth.")
+        except Exception as e:
+            print(f"BŁĄD: Nie udało się uruchomić Chrome lub ChromeDriver: {e}")
+            print("Upewnij się, że Chrome i ChromeDriver są zainstalowane i ścieżki są poprawne.")
+            exit(1)
         
         driver.get("https://www.facebook.com")
         
