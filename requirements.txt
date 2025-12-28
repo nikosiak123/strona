@@ -1,0 +1,4 @@
+selenium
+vertexai
+requests
+facebook-sdk
