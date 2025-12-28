@@ -1,7 +1,7 @@
 {
   "AI_CONFIG": {
     "PROJECT_ID": "hopeful-runner-480022-f9",
-    "LOCATION": "europe-central2-c",
+    "LOCATION": "europe-central2",
     "MODEL_ID": "publishers/google/models/gemini-2.5-flash-lite"
   },
   "AIRTABLE_CONFIG": {
