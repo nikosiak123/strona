@@ -533,7 +533,7 @@ if __name__ == '__main__':
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
     
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 5000))
     logging.info(f"Uruchamianie serwera na porcie {port}...")
     try:
         from waitress import serve
