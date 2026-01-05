@@ -172,6 +172,31 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
 
+def send_email_via_brevo(to_email, subject, html_content):
+    """Wysyła email przez Brevo API."""
+    headers = {
+        "accept": "application/json",
+        "api-key": config.get("BREVO_API_KEY", ""),
+        "content-type": "application/json"
+    }
+    payload = {
+        "sender": {
+            "name": "Bot Korepetycje",
+            "email": config.get("FROM_EMAIL", "bot@korepetycje.pl")
+        },
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_content
+    }
+    try:
+        response = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
+        if response.status_code == 201:
+            logging.info(f"Email wysłany pomyślnie do {to_email}: {subject}")
+        else:
+            logging.error(f"Błąd wysyłania emaila do {to_email}: {response.status_code} - {response.text}")
+    except Exception as e:
+        logging.error(f"Wyjątek podczas wysyłania emaila: {e}")
+
 def load_config():
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
@@ -447,6 +472,31 @@ def process_event(event_payload):
         page_name = page_config.get("name", "Nieznana Strona")
         history = load_history(sender_id)
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
+
+        # Sprawdź tryby specjalne
+        if history and len(history) > 1 and history[-2].parts[0].text in ["POST_RESERVATION_MODE", "MANUAL_MODE"]:
+            mode = history[-2].parts[0].text
+            if mode == "MANUAL_MODE":
+                logging.info(f"Użytkownik {sender_id} jest w trybie ręcznym - brak odpowiedzi automatycznej.")
+                return
+            elif mode == "POST_RESERVATION_MODE":
+                user_msg_lower = user_message_text.lower()
+                if "pomoc" in user_msg_lower:
+                    # Powiadomienie
+                    admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
+                    last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
+                    html_content = f"<p>Użytkownik {sender_id} poprosił o pomoc po rezerwacji.</p><p>PSID: {sender_id}</p><p>Ostatnie wiadomości:</p><pre>{last_msgs}</pre>"
+                    send_email_via_brevo(admin_email, "Prośba o pomoc od użytkownika", html_content)
+                    # Przejdź w MANUAL_MODE
+                    history.append(Content(role="model", parts=[Part.from_text("MANUAL_MODE")]))
+                    save_history(sender_id, history)
+                    logging.info(f"Użytkownik {sender_id} przeszedł w tryb ręczny.")
+                    return
+                else:
+                    # Standardowa wiadomość
+                    send_message(sender_id, 'Moja rola asystenta rezerwacji zakończyła się po wysłaniu linku do rezerwacji, jeśli potrzebujesz pomocy odpowiedz na tą wiadomość: "POMOC"', page_token)
+                    return
+
         ai_response_raw = get_gemini_response(history, prompt_details)
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
@@ -471,7 +521,20 @@ def process_event(event_payload):
             final_message_to_user = ai_response_raw
             
         send_message(sender_id, final_message_to_user, page_token)
-        
+
+        if AGREEMENT_MARKER in ai_response_raw:
+            # Oznacz początek trybu po rezerwacji
+            history.append(Content(role="model", parts=[Part.from_text("POST_RESERVATION_MODE")]))
+
+        # Oznacz wiadomość użytkownika jako przeczytaną
+        mark_seen_params = {"access_token": page_token}
+        mark_seen_payload = {"recipient": {"id": sender_id}, "sender_action": "mark_seen"}
+        try:
+            requests.post(FACEBOOK_GRAPH_API_URL, params=mark_seen_params, json=mark_seen_payload, timeout=30)
+            logging.info(f"Oznaczono wiadomość od {sender_id} jako przeczytaną.")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Błąd oznaczania wiadomości jako przeczytanej dla {sender_id}: {e}")
+
         if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
             try:
                 nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
