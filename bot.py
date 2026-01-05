@@ -29,6 +29,9 @@ FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
 HISTORY_DIR = "conversation_store"
 MAX_HISTORY_TURNS = 10
 
+# Klucz API dla Brevo (tymczasowo)
+BREVO_API_KEY = "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"
+
 # --- Wczytywanie konfiguracji z pliku ---
 config = {}
 try:
@@ -181,7 +184,7 @@ def send_email_via_brevo(to_email, subject, html_content):
     """Wysyła email przez Brevo API."""
     headers = {
         "accept": "application/json",
-        "api-key": config.get("BREVO_API_KEY", ""),
+        "api-key": BREVO_API_KEY,
         "content-type": "application/json"
     }
     payload = {
@@ -499,7 +502,7 @@ def process_event(event_payload):
                     return
                 else:
                     # Standardowa wiadomość
-                    send_message(sender_id, 'Moja rola asystenta rezerwacji zakończyła się po wysłaniu linku do rezerwacji, jeśli potrzebujesz pomocy odpowiedz na tą wiadomość: "POMOC"', page_token)
+                    send_message(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
                     return
 
         ai_response_raw = get_gemini_response(history, prompt_details)
