@@ -482,12 +482,15 @@ def process_event(event_payload):
         history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
 
         # Sprawdź tryby specjalne
-        if history and len(history) > 1 and history[-2].parts[0].text in ["POST_RESERVATION_MODE", "MANUAL_MODE"]:
-            mode = history[-2].parts[0].text
-            if mode == "MANUAL_MODE":
-                logging.info(f"Użytkownik {sender_id} jest w trybie ręcznym - brak odpowiedzi automatycznej.")
-                save_history(sender_id, history)  # Zapisz historię z nową wiadomością użytkownika
-                return
+        manual_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'MANUAL_MODE')
+        post_reservation_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'POST_RESERVATION_MODE')
+
+        if manual_mode_active:
+            logging.info(f"Użytkownik {sender_id} jest w trybie ręcznym - brak odpowiedzi automatycznej.")
+            save_history(sender_id, history)  # Zapisz historię z nową wiadomością użytkownika
+            return
+
+        if post_reservation_mode_active:
             elif mode == "POST_RESERVATION_MODE":
                 user_msg_lower = user_message_text.lower()
                 if "pomoc" in user_msg_lower:
