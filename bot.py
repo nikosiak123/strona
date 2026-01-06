@@ -503,10 +503,9 @@ def process_event(event_payload):
                 save_history(sender_id, history)
                 logging.info(f"Użytkownik {sender_id} przeszedł w tryb ręczny.")
                 return
-            else:
-                # Standardowa wiadomość
-                send_message(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
-                return
+            # Standardowa wiadomość
+            send_message(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
+            return
 
         ai_response_raw = get_gemini_response(history, prompt_details)
 
