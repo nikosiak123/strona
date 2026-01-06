@@ -33,12 +33,12 @@ MAX_HISTORY_TURNS = 10
 BREVO_API_KEY = "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"
 
 # --- Wczytywanie konfiguracji z pliku ---
-config = {}
+config_path = '/home/korepetotor2/strona/config.json'
 try:
-    with open('config.json', 'r', encoding='utf-8') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError) as e:
-    print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku 'config.json': {e}")
+    print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku '{config_path}': {e}")
     exit()
 
 AI_CONFIG = config.get("AI_CONFIG", {})
