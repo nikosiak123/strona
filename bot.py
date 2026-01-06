@@ -279,7 +279,9 @@ def load_history(user_psid):
         for msg_data in history_data:
             if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
                 parts = [Part.from_text(p['text']) for p in msg_data['parts']]
-                history.append(Content(role=msg_data['role'], parts=parts))
+                msg = Content(role=msg_data['role'], parts=parts)
+                msg.read = msg_data.get('read', False)
+                history.append(msg)
         return history
     except Exception: return []
 
@@ -290,7 +292,10 @@ def save_history(user_psid, history):
     history_data = []
     for msg in history_to_save:
         parts_data = [{'text': part.text} for part in msg.parts]
-        history_data.append({'role': msg.role, 'parts': parts_data})
+        msg_dict = {'role': msg.role, 'parts': parts_data}
+        if hasattr(msg, 'read'):
+            msg_dict['read'] = msg.read
+        history_data.append(msg_dict)
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(history_data, f, indent=2)
@@ -479,7 +484,9 @@ def process_event(event_payload):
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
         history = load_history(sender_id)
-        history.append(Content(role="user", parts=[Part.from_text(user_message_text)]))
+        new_msg = Content(role="user", parts=[Part.from_text(user_message_text)])
+        new_msg.read = False
+        history.append(new_msg)
 
         # Sprawdź tryby specjalne
         manual_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'MANUAL_MODE')
