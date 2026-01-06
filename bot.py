@@ -26,7 +26,7 @@ import uuid
 app = Flask(__name__)
 VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "KOLAGEN")
 FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
-HISTORY_DIR = "conversation_store"
+HISTORY_DIR = "/home/korepetotor2/strona/conversation_store"
 MAX_HISTORY_TURNS = 10
 
 # Klucz API dla Brevo (tymczasowo)
