@@ -506,8 +506,7 @@ def process_event(event_payload):
                     return
 
         ai_response_raw = get_gemini_response(history, prompt_details)
-        history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
-        
+
         logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
         conversation_status = classify_conversation(history)
         logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
@@ -516,7 +515,7 @@ def process_event(event_payload):
             logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
             follow_up_time_iso = estimate_follow_up_time(history)
             logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
-        
+
         final_message_to_user = ""
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
@@ -527,7 +526,9 @@ def process_event(event_payload):
                 final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
         else:
             final_message_to_user = ai_response_raw
-            
+
+        history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
+
         send_message(sender_id, final_message_to_user, page_token)
 
         if AGREEMENT_MARKER in ai_response_raw:
