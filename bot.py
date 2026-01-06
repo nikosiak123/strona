@@ -486,6 +486,7 @@ def process_event(event_payload):
             mode = history[-2].parts[0].text
             if mode == "MANUAL_MODE":
                 logging.info(f"Użytkownik {sender_id} jest w trybie ręcznym - brak odpowiedzi automatycznej.")
+                save_history(sender_id, history)  # Zapisz historię z nową wiadomością użytkownika
                 return
             elif mode == "POST_RESERVATION_MODE":
                 user_msg_lower = user_message_text.lower()
