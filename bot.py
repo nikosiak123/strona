@@ -493,20 +493,20 @@ def process_event(event_payload):
         if post_reservation_mode_active:
             user_msg_lower = user_message_text.lower()
             if "pomoc" in user_msg_lower:
-                    # Powiadomienie
-                    admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
-                    last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
-                    html_content = f"<p>Użytkownik {sender_id} poprosił o pomoc po rezerwacji.</p><p>PSID: {sender_id}</p><p>Ostatnie wiadomości:</p><pre>{last_msgs}</pre>"
-                    send_email_via_brevo(admin_email, "Prośba o pomoc od użytkownika", html_content)
-                    # Przejdź w MANUAL_MODE
-                    history.append(Content(role="model", parts=[Part.from_text("MANUAL_MODE")]))
-                    save_history(sender_id, history)
-                    logging.info(f"Użytkownik {sender_id} przeszedł w tryb ręczny.")
-                    return
-                else:
-                    # Standardowa wiadomość
-                    send_message(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
-                    return
+                # Powiadomienie
+                admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
+                last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
+                html_content = f"<p>Użytkownik {sender_id} poprosił o pomoc po rezerwacji.</p><p>PSID: {sender_id}</p><p>Ostatnie wiadomości:</p><pre>{last_msgs}</pre>"
+                send_email_via_brevo(admin_email, "Prośba o pomoc od użytkownika", html_content)
+                # Przejdź w MANUAL_MODE
+                history.append(Content(role="model", parts=[Part.from_text("MANUAL_MODE")]))
+                save_history(sender_id, history)
+                logging.info(f"Użytkownik {sender_id} przeszedł w tryb ręczny.")
+                return
+            else:
+                # Standardowa wiadomość
+                send_message(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
+                return
 
         ai_response_raw = get_gemini_response(history, prompt_details)
 
