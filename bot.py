@@ -491,9 +491,8 @@ def process_event(event_payload):
             return
 
         if post_reservation_mode_active:
-            elif mode == "POST_RESERVATION_MODE":
-                user_msg_lower = user_message_text.lower()
-                if "pomoc" in user_msg_lower:
+            user_msg_lower = user_message_text.lower()
+            if "pomoc" in user_msg_lower:
                     # Powiadomienie
                     admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
                     last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
