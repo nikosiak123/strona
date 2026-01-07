@@ -59,11 +59,12 @@ def get_facebook_errors():
         errors = []
         for filename in os.listdir(debug_logs_dir):
             if filename.startswith('ERROR_') and filename.endswith(('.png', '.html')):
-                # Parse filename: ERROR_location_timestamp.ext
-                parts = filename.split('_')
-                if len(parts) >= 3:
-                    location = '_'.join(parts[1:-1])
-                    timestamp_str = parts[-1].split('.')[0]
+                # Parse filename: ERROR_location_YYYYMMDD_HHMMSS.ext
+                name_without_ext = filename.rsplit('.', 1)[0]
+                parts = name_without_ext.split('_')
+                if len(parts) >= 4 and len(parts[-1]) == 6 and len(parts[-2]) == 8:
+                    timestamp_str = parts[-2] + '_' + parts[-1]
+                    location = '_'.join(parts[1:-2])
                     try:
                         timestamp = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
                         ext = filename.split('.')[-1]
