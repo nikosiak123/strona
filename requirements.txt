@@ -3,3 +3,5 @@ selenium-stealth
 vertexai
 requests
 facebook-sdk
+flask
+flask-cors
