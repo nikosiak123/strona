@@ -281,6 +281,7 @@ def load_history(user_psid):
                 parts = [Part.from_text(p['text']) for p in msg_data['parts']]
                 msg = Content(role=msg_data['role'], parts=parts)
                 msg.read = msg_data.get('read', False)
+                msg.timestamp = msg_data.get('timestamp')
                 history.append(msg)
         return history
     except Exception: return []
@@ -295,6 +296,8 @@ def save_history(user_psid, history):
         msg_dict = {'role': msg.role, 'parts': parts_data}
         if hasattr(msg, 'read'):
             msg_dict['read'] = msg.read
+        if hasattr(msg, 'timestamp'):
+            msg_dict['timestamp'] = msg.timestamp
         history_data.append(msg_dict)
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -321,22 +324,41 @@ def save_nudge_tasks(tasks, tasks_file):
 
 def cancel_nudge(psid, tasks_file):
     tasks = load_nudge_tasks(tasks_file)
-    task_id_to_remove = next((task_id for task_id, task in tasks.items() if task.get("psid") == psid), None)
-    if task_id_to_remove:
-        del tasks[task_id_to_remove]
+    tasks_to_remove = [task_id for task_id, task in tasks.items() if task.get("psid") == psid]
+    for task_id in tasks_to_remove:
+        del tasks[task_id]
+    if tasks_to_remove:
         save_nudge_tasks(tasks, tasks_file)
-        logging.info(f"Anulowano przypomnienie dla PSID {psid}.")
+        logging.info(f"Anulowano {len(tasks_to_remove)} przypomnień dla PSID {psid}.")
 
-def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None):
-    cancel_nudge(psid, tasks_file)
+def adjust_time_for_window(nudge_time):
+    """Dostosuj czas do okna 6:00-23:00."""
+    if 23 <= nudge_time.hour < 24 or 0 <= nudge_time.hour < 1:
+        # Jeśli między 23:00 a 1:00, wyślij o 22:30 poprzedniego dnia
+        nudge_time = nudge_time.replace(hour=22, minute=30, second=0, microsecond=0) - timedelta(days=1)
+    elif 1 <= nudge_time.hour < 6:
+        # Jeśli między 1:00 a 6:00, wyślij o 6:00 tego samego dnia
+        nudge_time = nudge_time.replace(hour=6, minute=0, second=0, microsecond=0)
+    return nudge_time
+
+def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None, level=None):
+    # For expect_reply, don't cancel existing, allow multiple levels
+    if status.startswith("pending_expect_reply"):
+        pass
+    else:
+        cancel_nudge(psid, tasks_file)
     tasks = load_nudge_tasks(tasks_file)
     task_id = str(uuid.uuid4())
     task_data = {"psid": psid, "page_id": page_id, "status": status}
-    if nudge_time_iso: task_data["nudge_time_iso"] = nudge_time_iso
+    if nudge_time_iso:
+        nudge_time = datetime.fromisoformat(nudge_time_iso)
+        nudge_time = adjust_time_for_window(nudge_time)
+        task_data["nudge_time_iso"] = nudge_time.isoformat()
     if nudge_message: task_data["nudge_message"] = nudge_message
+    if level: task_data["level"] = level
     tasks[task_id] = task_data
     save_nudge_tasks(tasks, tasks_file)
-    logging.info(f"Zaplanowano przypomnienie (status: {status}) dla PSID {psid}.")
+    logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
 
 def check_and_send_nudges():
     # logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
@@ -364,8 +386,18 @@ def check_and_send_nudges():
                 if page_config and page_config.get("token"):
                     psid, token = task['psid'], page_config["token"]
                     message_to_send = task.get("nudge_message")
+                    level = task.get("level", 1)
                     if message_to_send:
                         send_message(psid, message_to_send, token)
+                    if level == 1 and task["status"] == "pending_expect_reply_1":
+                        # Schedule level 2
+                        now = datetime.now(pytz.timezone(TIMEZONE))
+                        nudge_time = now + timedelta(hours=6)
+                        nudge_time = adjust_time_for_window(nudge_time)
+                        schedule_nudge(psid, task["page_id"], "pending_expect_reply_2", tasks_file,
+                                       nudge_time_iso=nudge_time.isoformat(),
+                                       nudge_message="Czy są Państwo nadal zainteresowani korepetycjami?",
+                                       level=2)
                     task['status'] = 'done'
                     tasks_to_modify[task_id] = task
                 else:
@@ -473,8 +505,17 @@ def process_event(event_payload):
         recipient_id = event_payload.get("recipient", {}).get("id")
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
         if event_payload.get("read"):
-             logging.info(f"Użytkownik {sender_id} odczytał wiadomość. (Brak akcji anulującej)")
-             return
+            tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
+            for task_id, task in tasks.items():
+                if task.get("psid") == sender_id and task.get("status") == "pending_expect_reply_1":
+                    now = datetime.now(pytz.timezone(TIMEZONE))
+                    nudge_time = now + timedelta(hours=4)
+                    nudge_time = adjust_time_for_window(nudge_time)
+                    task["nudge_time_iso"] = nudge_time.isoformat()
+                    logging.info(f"Przeplanowano przypomnienie poziom 1 dla {sender_id} na {nudge_time.isoformat()} po odczytaniu.")
+                    break
+            save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+            return
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text: return
         cancel_nudge(sender_id, NUDGE_TASKS_FILE)
@@ -537,6 +578,7 @@ def process_event(event_payload):
             final_message_to_user = ai_response_raw
 
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
+        history[-1].timestamp = str(datetime.now(pytz.timezone(TIMEZONE)).isoformat())
 
         send_message(sender_id, final_message_to_user, page_token)
 
@@ -572,8 +614,15 @@ def process_event(event_payload):
             except ValueError:
                 logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
         elif conversation_status == EXPECTING_REPLY:
-            logging.info("Status to EXPECTING_REPLY. (Brak akcji przypominającej)")
-            pass
+            # Schedule first reminder after 12h
+            now = datetime.now(pytz.timezone(TIMEZONE))
+            nudge_time = now + timedelta(hours=12)
+            nudge_time = adjust_time_for_window(nudge_time)
+            schedule_nudge(sender_id, recipient_id, "pending_expect_reply_1", NUDGE_TASKS_FILE,
+                           nudge_time_iso=nudge_time.isoformat(),
+                           nudge_message="Potrzebują Państwo jeszcze jakiś informacji? Może mają Państwo jeszcze jakieś wątpliwości?",
+                           level=1)
+            logging.info("Status to EXPECTING_REPLY. Zaplanowano pierwsze przypomnienie.")
         else:
             logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
         
