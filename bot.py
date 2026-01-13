@@ -394,7 +394,7 @@ def check_and_send_nudges():
                         now = datetime.now(pytz.timezone(TIMEZONE))
                         nudge_time = now + timedelta(hours=6)
                         nudge_time = adjust_time_for_window(nudge_time)
-                        schedule_nudge(psid, task["page_id"], "pending_expect_reply_2", tasks_file,
+                        schedule_nudge(psid, task["page_id"], "pending_expect_reply_2", NUDGE_TASKS_FILE,
                                        nudge_time_iso=nudge_time.isoformat(),
                                        nudge_message="Czy są Państwo nadal zainteresowani korepetycjami?",
                                        level=2)
