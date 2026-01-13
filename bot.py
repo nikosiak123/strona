@@ -388,7 +388,7 @@ def check_and_send_nudges():
                     message_to_send = task.get("nudge_message")
                     level = task.get("level", 1)
                     if message_to_send:
-                        send_message(psid, message_to_send, token)
+                        send_message_with_typing(psid, message_to_send, token)
                     if level == 1 and task["status"] == "pending_expect_reply_1":
                         # Schedule level 2
                         now = datetime.now(pytz.timezone(TIMEZONE))
@@ -420,6 +420,27 @@ def check_and_send_nudges():
 def send_message(recipient_id, message_text, page_access_token):
     if not all([recipient_id, message_text, page_access_token]): return
     params = {"access_token": page_access_token}
+    payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
+    try:
+        r = requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=payload, timeout=30)
+        r.raise_for_status()
+        logging.info(f"Wysłano wiadomość do {recipient_id}: '{message_text[:50]}...'")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
+
+def send_message_with_typing(recipient_id, message_text, page_access_token):
+    if not all([recipient_id, message_text, page_access_token]): return
+    params = {"access_token": page_access_token}
+    # Wyślij typing_on
+    typing_payload = {"recipient": {"id": recipient_id}, "sender_action": "typing_on"}
+    try:
+        requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=typing_payload, timeout=30)
+    except requests.exceptions.RequestException:
+        pass  # Ignoruj błąd typing_on
+    # Oblicz opóźnienie na podstawie długości wiadomości
+    delay = min(len(message_text) * 0.05, 10)  # 0.05s na znak, max 10s
+    time.sleep(delay)
+    # Wyślij wiadomość
     payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
     try:
         r = requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=payload, timeout=30)
@@ -552,7 +573,7 @@ def process_event(event_payload):
                 logging.info(f"Użytkownik {sender_id} przeszedł w tryb ręczny.")
                 return
             # Standardowa wiadomość
-            send_message(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
+            send_message_with_typing(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
             return
 
         ai_response_raw = get_gemini_response(history, prompt_details)
@@ -580,7 +601,7 @@ def process_event(event_payload):
         history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         history[-1].timestamp = str(datetime.now(pytz.timezone(TIMEZONE)).isoformat())
 
-        send_message(sender_id, final_message_to_user, page_token)
+        send_message_with_typing(sender_id, final_message_to_user, page_token)
 
         if AGREEMENT_MARKER in ai_response_raw:
             # Oznacz początek trybu po rezerwacji
