@@ -438,7 +438,7 @@ def send_message_with_typing(recipient_id, message_text, page_access_token):
     except requests.exceptions.RequestException:
         pass  # Ignoruj błąd typing_on
     # Oblicz opóźnienie na podstawie długości wiadomości
-    delay = min(len(message_text) * 0.05, 10)  # 0.05s na znak, max 10s
+    delay = max(0, min(len(message_text) * 0.05, 10) - 4.5)  # 0.05s na znak, max 10s, minus 4.5s
     time.sleep(delay)
     # Wyślij wiadomość
     payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
