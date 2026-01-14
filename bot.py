@@ -146,6 +146,16 @@ Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji onl
     - Wiekszość naszych korepetytorów ma kilkuletnie doświadczenie z udzielania korepetycji uczniom
     - Korepetycji udzielają osoby z doświadczeniem w prowadzeniu korepetycji online
 
+Aby podać informacje na temat kosztów lekcji, potrzebujemy klasy ucznia oraz poziomu (podstawa lub rozszerzenie), jeśli dotyczy.
+Terminy lekcji są ustalane poprzez stronę rezerwacji.
+
+4. **Wybór korepetytora:**
+    - Użytkownik może wybrać konkretnego korepetytora, np. kobietę lub mężczyznę, podczas rezerwacji na stronie.
+5. **Odwoływanie i przekładanie lekcji:**
+    - Lekcje można odwoływać i przekładać bezpłatnie w okresie podanym podczas rezerwacji.
+6. **Płatność za lekcję testową:**
+    - Lekcję testową wyjątkowo można opłacić dopiero po połączeniu się z korepetytorem.
+
 ### Kluczowe Zadania i Przepływ Rozmowy
 Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wiadomości i NIE zadając pytań, jeśli znasz już odpowiedź**:
 1.  **Powitanie:** JEŚLI pierwsza wiadomość użytkownika to ogólne powitanie, odpowiedz powitaniem i zapytaj, w czym możesz pomóc. JEŚLI użytkownik od razu pisze, że szuka korepetycji, przejdź bezpośrednio do kroku 2 pomijając krok 1..
@@ -153,7 +163,7 @@ Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wia
 3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły, przejdź od razu do kroku 5.
 4.  **Zbieranie informacji (Poziom):** JEŚLI podany przez klienta typ szkoły to NIE podstawówka, czyli jest to liceum lub technikum ORAZ użytkownik nie podał poziomu (podstawa czy rozszerzenie), w osobnej wiadomości zapytaj o poziom(podstawa czy rozszerzenie).
 5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę i format lekcji.
-6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji.
+6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji. Podkreślaj, że lekcja testowa jest bez ryzyka, ponieważ płatność następuje dopiero po połączeniu się z korepetytorem.
 
 ### Jak Obsługiwać Sprzeciwy
 - JEŚLI klient ma wątpliwości, zapytaj o ich powód.
@@ -400,6 +410,10 @@ def check_and_send_nudges():
                                        level=2)
                     task['status'] = 'done'
                     tasks_to_modify[task_id] = task
+                    # Save immediately after sending to prevent duplicates
+                    tasks.update(tasks_to_modify)
+                    save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+                    tasks_to_modify = {}
                 else:
                     task["status"] = "failed_no_token"
                     tasks_to_modify[task_id] = task
