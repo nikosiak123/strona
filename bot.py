@@ -447,7 +447,7 @@ def check_and_send_nudges():
                     tasks_to_modify[task_id] = task
                     # Save immediately after sending to prevent duplicates
                     tasks.update(tasks_to_modify)
-                    save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+                    #save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
                     tasks_to_modify = {}
                 else:
                     task["status"] = "failed_no_token"
