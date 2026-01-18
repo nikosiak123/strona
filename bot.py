@@ -336,23 +336,16 @@ def save_history(user_psid, history):
 # === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
 # =====================================================================
 def load_nudge_tasks(tasks_file):
-    if not os.path.exists(tasks_file): 
-        logging.info(f"Tasks file {tasks_file} does not exist")
-        return {}
+    if not os.path.exists(tasks_file): return {}
     try:
         with open(tasks_file, 'r', encoding='utf-8') as f:
-            tasks = json.load(f)
-            logging.info(f"Loaded {len(tasks)} tasks from {tasks_file}")
-            return tasks
-    except Exception as e: 
-        logging.error(f"Error loading tasks from {tasks_file}: {e}")
-        return {}
+            return json.load(f)
+    except Exception: return {}
 
 def save_nudge_tasks(tasks, tasks_file):
     try:
         with open(tasks_file, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2)
-            logging.info(f"Saved {len(tasks)} tasks to {tasks_file}")
     except Exception as e:
         logging.error(f"Błąd zapisu zadań przypomnień: {e}")
 
@@ -375,7 +368,7 @@ def adjust_time_for_window(nudge_time):
         nudge_time = nudge_time.replace(hour=6, minute=0, second=0, microsecond=0)
     return nudge_time
 
-def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None, level=None, save=True):
+def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None, level=None):
     # For expect_reply, don't cancel existing, allow multiple levels
     if status.startswith("pending_expect_reply"):
         pass
@@ -391,13 +384,8 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     if nudge_message: task_data["nudge_message"] = nudge_message
     if level: task_data["level"] = level
     tasks[task_id] = task_data
-    if save:
-        save_nudge_tasks(tasks, tasks_file)
-        logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
-        return None
-    else:
-        logging.info(f"Przygotowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
-        return task_id, task_data
+    save_nudge_tasks(tasks, tasks_file)
+    logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
 
 def check_and_send_nudges():
     logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
@@ -412,7 +400,6 @@ def check_and_send_nudges():
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
-        logging.info(f"Processing task {task_id}, status {task.get('status')}")
         if not task.get("status", "").startswith("pending"): continue
         try:
             nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
@@ -452,7 +439,7 @@ def check_and_send_nudges():
                     tasks_to_modify[task_id] = task
                     # Save immediately after sending to prevent duplicates
                     tasks.update(tasks_to_modify)
-                    #save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+                    save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
                     tasks_to_modify = {}
                 else:
                     task["status"] = "failed_no_token"
