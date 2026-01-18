@@ -462,8 +462,10 @@ def check_and_send_nudges():
                 tasks_to_modify[task_id] = task
     if tasks_to_modify:
         tasks.update(tasks_to_modify)
-        save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
-        logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
+        logging.info(f"[Scheduler] After final update, tasks now have {len(tasks)} items")
+        logging.info("[Scheduler] Proceeding to save tasks after final update")
+        # save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+        # logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
 
 # =====================================================================
 # === FUNKCJE KOMUNIKACJI Z AI ========================================
