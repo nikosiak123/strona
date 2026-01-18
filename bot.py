@@ -388,12 +388,14 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
 
 def check_and_send_nudges():
-    # logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
+    logging.info(f"[Scheduler] Start sprawdzania o {datetime.now(pytz.timezone(TIMEZONE)).isoformat()}")
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return
     tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
+    logging.info(f"[Scheduler] Załadowano {len(tasks)} zadań przypomnień.")
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
@@ -416,6 +418,7 @@ def check_and_send_nudges():
                     level = task.get("level", 1)
                     if message_to_send:
                         send_message_with_typing(psid, message_to_send, token)
+                        logging.info(f"[Scheduler] Wysłano przypomnienie poziom {level} dla PSID {psid}")
                         # Dodaj wiadomość przypominającą do historii konwersacji
                         history = load_history(psid)
                         reminder_msg = Content(role="model", parts=[Part.from_text(message_to_send)])
