@@ -420,7 +420,12 @@ def check_and_send_nudges():
                     if message_to_send:
                         send_message_with_typing(psid, message_to_send, token)
                         logging.info(f"[Scheduler] Wysłano przypomnienie poziom {level} dla PSID {psid}")
-                        # Nie dodawaj wiadomości przypominających do historii, aby uniknąć problemów z AI
+                        # Dodaj wiadomość przypominającą do historii konwersacji
+                        history = load_history(psid)
+                        reminder_msg = Content(role="model", parts=[Part.from_text(message_to_send)])
+                        history.append(reminder_msg)
+                        save_history(psid, history)
+                        logging.info(f"Dodano wiadomość przypominającą do historii dla PSID {psid}")
                     if level == 1 and task["status"] == "pending_expect_reply_1":
                         # Schedule level 2
                         now = datetime.now(pytz.timezone(TIMEZONE))
