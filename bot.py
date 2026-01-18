@@ -636,36 +636,37 @@ def process_event(event_payload):
         except requests.exceptions.RequestException as e:
             logging.error(f"Błąd oznaczania wiadomości jako przeczytanej dla {sender_id}: {e}")
 
-        if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
-            try:
-                nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
-                local_tz = pytz.timezone(TIMEZONE)
-                nudge_time = local_tz.localize(nudge_time_naive)
+        if AGREEMENT_MARKER not in ai_response_raw:  # Nie planuj przypomnień po wysłaniu linku do lekcji
+            if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
+                try:
+                    nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
+                    local_tz = pytz.timezone(TIMEZONE)
+                    nudge_time = local_tz.localize(nudge_time_naive)
+                    now = datetime.now(pytz.timezone(TIMEZONE))
+                    if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
+                        logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
+                        follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
+                        logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
+                        schedule_nudge(sender_id, recipient_id, "pending_follow_up",
+                                       tasks_file=NUDGE_TASKS_FILE,
+                                       nudge_time_iso=nudge_time.isoformat(),
+                                       nudge_message=follow_up_message)
+                    else:
+                        logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
+                except ValueError:
+                    logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
+            elif conversation_status == EXPECTING_REPLY:
+                # Schedule first reminder after 12h
                 now = datetime.now(pytz.timezone(TIMEZONE))
-                if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
-                    logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
-                    follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
-                    logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
-                    schedule_nudge(sender_id, recipient_id, "pending_follow_up", 
-                                   tasks_file=NUDGE_TASKS_FILE,
-                                   nudge_time_iso=nudge_time.isoformat(), 
-                                   nudge_message=follow_up_message)
-                else:
-                    logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
-            except ValueError:
-                logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
-        elif conversation_status == EXPECTING_REPLY:
-            # Schedule first reminder after 12h
-            now = datetime.now(pytz.timezone(TIMEZONE))
-            nudge_time = now + timedelta(minutes=6)
-            nudge_time = adjust_time_for_window(nudge_time)
-            schedule_nudge(sender_id, recipient_id, "pending_expect_reply_1", NUDGE_TASKS_FILE,
-                           nudge_time_iso=nudge_time.isoformat(),
-                           nudge_message="Potrzebują Państwo jeszcze jakiś informacji? Może mają Państwo jeszcze jakieś wątpliwości?",
-                           level=1)
-            logging.info("Status to EXPECTING_REPLY. Zaplanowano pierwsze przypomnienie.")
-        else:
-            logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
+                nudge_time = now + timedelta(minutes=6)
+                nudge_time = adjust_time_for_window(nudge_time)
+                schedule_nudge(sender_id, recipient_id, "pending_expect_reply_1", NUDGE_TASKS_FILE,
+                               nudge_time_iso=nudge_time.isoformat(),
+                               nudge_message="Potrzebują Państwo jeszcze jakiś informacji? Może mają Państwo jeszcze jakieś wątpliwości?",
+                               level=1)
+                logging.info("Status to EXPECTING_REPLY. Zaplanowano pierwsze przypomnienie.")
+            else:
+                logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
         
         save_history(sender_id, history)
     except Exception as e:
