@@ -299,7 +299,7 @@ def load_history(user_psid):
 def save_history(user_psid, history):
     ensure_dir(HISTORY_DIR)
     filepath = os.path.join(HISTORY_DIR, f"{user_psid}.json")
-    history_to_save = history[-(MAX_HISTORY_TURNS * 2):]
+    history_to_save = history  # Bez limitu długości historii
     history_data = []
     for msg in history_to_save:
         parts_data = [{'text': part.text} for part in msg.parts]
@@ -399,6 +399,12 @@ def check_and_send_nudges():
                     level = task.get("level", 1)
                     if message_to_send:
                         send_message_with_typing(psid, message_to_send, token)
+                        # Dodaj wiadomość przypominającą do historii konwersacji
+                        history = load_history(psid)
+                        reminder_msg = Content(role="model", parts=[Part.from_text(message_to_send)])
+                        history.append(reminder_msg)
+                        save_history(psid, history)
+                        logging.info(f"Dodano wiadomość przypominającą do historii dla PSID {psid}")
                     if level == 1 and task["status"] == "pending_expect_reply_1":
                         # Schedule level 2
                         now = datetime.now(pytz.timezone(TIMEZONE))
