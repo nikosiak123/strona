@@ -336,16 +336,23 @@ def save_history(user_psid, history):
 # === FUNKCJE ZARZĄDZANIA PRZYPOMNIENIAMI (NUDGE) =======================
 # =====================================================================
 def load_nudge_tasks(tasks_file):
-    if not os.path.exists(tasks_file): return {}
+    if not os.path.exists(tasks_file): 
+        logging.info(f"Tasks file {tasks_file} does not exist")
+        return {}
     try:
         with open(tasks_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception: return {}
+            tasks = json.load(f)
+            logging.info(f"Loaded {len(tasks)} tasks from {tasks_file}")
+            return tasks
+    except Exception as e: 
+        logging.error(f"Error loading tasks from {tasks_file}: {e}")
+        return {}
 
 def save_nudge_tasks(tasks, tasks_file):
     try:
         with open(tasks_file, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2)
+            logging.info(f"Saved {len(tasks)} tasks to {tasks_file}")
     except Exception as e:
         logging.error(f"Błąd zapisu zadań przypomnień: {e}")
 
@@ -400,6 +407,7 @@ def check_and_send_nudges():
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
+        logging.info(f"Processing task {task_id}, status {task.get('status')}")
         if not task.get("status", "").startswith("pending"): continue
         try:
             nudge_time = datetime.fromisoformat(task["nudge_time_iso"])
