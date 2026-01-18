@@ -375,6 +375,11 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     else:
         cancel_nudge(psid, tasks_file)
     tasks = load_nudge_tasks(tasks_file)
+    if status == "pending_expect_reply_2":
+        for tid, t in list(tasks.items()):
+            if t.get("psid") == psid and t.get("status") == "pending_expect_reply_1":
+                t["status"] = "done"
+                break
     task_id = str(uuid.uuid4())
     task_data = {"psid": psid, "page_id": page_id, "status": status}
     if nudge_time_iso:
