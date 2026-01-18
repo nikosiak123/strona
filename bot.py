@@ -445,6 +445,8 @@ def check_and_send_nudges():
                                        nudge_time_iso=nudge_time.isoformat(),
                                        nudge_message="Czy są Państwo nadal zainteresowani korepetycjami?",
                                        level=2)
+                        # Reload tasks to include the newly scheduled level 2
+                        tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
                     task['status'] = 'done'
                     tasks_to_modify[task_id] = task
                     # Save immediately after sending to prevent duplicates
@@ -462,10 +464,8 @@ def check_and_send_nudges():
                 tasks_to_modify[task_id] = task
     if tasks_to_modify:
         tasks.update(tasks_to_modify)
-        logging.info(f"[Scheduler] After final update, tasks now have {len(tasks)} items")
-        logging.info("[Scheduler] Proceeding to save tasks after final update")
-        # save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
-        # logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
+        save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
+        logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
 
 # =====================================================================
 # === FUNKCJE KOMUNIKACJI Z AI ========================================
