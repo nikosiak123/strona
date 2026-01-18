@@ -375,10 +375,12 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     else:
         cancel_nudge(psid, tasks_file)
     tasks = load_nudge_tasks(tasks_file)
+    logging.info(f"schedule_nudge loaded {len(tasks)} tasks: {[(k, v.get('status'), v.get('level')) for k, v in tasks.items()]}")
     if status == "pending_expect_reply_2":
         for tid, t in list(tasks.items()):
             if t.get("psid") == psid and t.get("status") == "pending_expect_reply_1":
                 t["status"] = "done"
+                logging.info(f"Set task {tid} to done")
                 break
     task_id = str(uuid.uuid4())
     task_data = {"psid": psid, "page_id": page_id, "status": status}
@@ -389,6 +391,7 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     if nudge_message: task_data["nudge_message"] = nudge_message
     if level: task_data["level"] = level
     tasks[task_id] = task_data
+    logging.info(f"Added new task {task_id} with status {status}, level {level}, now tasks: {len(tasks)}")
     save_nudge_tasks(tasks, tasks_file)
     logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
 
