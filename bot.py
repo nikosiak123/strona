@@ -428,7 +428,7 @@ def check_and_send_nudges():
                     if level == 1 and task["status"] == "pending_expect_reply_1":
                         # Schedule level 2
                         now = datetime.now(pytz.timezone(TIMEZONE))
-                        nudge_time = now + timedelta(minutes=3)
+                        nudge_time = now + timedelta(minutes=1.5)
                         nudge_time = adjust_time_for_window(nudge_time)
                         schedule_nudge(psid, task["page_id"], "pending_expect_reply_2", NUDGE_TASKS_FILE,
                                        nudge_time_iso=nudge_time.isoformat(),
@@ -570,7 +570,7 @@ def process_event(event_payload):
             for task_id, task in tasks.items():
                 if task.get("psid") == sender_id and task.get("status") == "pending_expect_reply_1":
                     now = datetime.now(pytz.timezone(TIMEZONE))
-                    nudge_time = now + timedelta(minutes=2)
+                    nudge_time = now + timedelta(minutes=1)
                     nudge_time = adjust_time_for_window(nudge_time)
                     task["nudge_time_iso"] = nudge_time.isoformat()
                     logging.info(f"Przeplanowano przypomnienie poziom 1 dla {sender_id} na {nudge_time.isoformat()} po odczytaniu.")
@@ -706,7 +706,7 @@ def process_event(event_payload):
             elif conversation_status == EXPECTING_REPLY:
                 # Schedule first reminder after 12h
                 now = datetime.now(pytz.timezone(TIMEZONE))
-                nudge_time = now + timedelta(minutes=6)
+                nudge_time = now + timedelta(minutes=3)
                 nudge_time = adjust_time_for_window(nudge_time)
                 schedule_nudge(sender_id, recipient_id, "pending_expect_reply_1", NUDGE_TASKS_FILE,
                                nudge_time_iso=nudge_time.isoformat(),
@@ -750,7 +750,7 @@ if __name__ == '__main__':
     ensure_dir(HISTORY_DIR)
     
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
-    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=60)
+    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=30)
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
     
