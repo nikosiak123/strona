@@ -375,7 +375,7 @@ def adjust_time_for_window(nudge_time):
         nudge_time = nudge_time.replace(hour=6, minute=0, second=0, microsecond=0)
     return nudge_time
 
-def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None, level=None):
+def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge_message=None, level=None, save=True):
     # For expect_reply, don't cancel existing, allow multiple levels
     if status.startswith("pending_expect_reply"):
         pass
@@ -391,8 +391,13 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     if nudge_message: task_data["nudge_message"] = nudge_message
     if level: task_data["level"] = level
     tasks[task_id] = task_data
-    save_nudge_tasks(tasks, tasks_file)
-    logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
+    if save:
+        save_nudge_tasks(tasks, tasks_file)
+        logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
+        return None
+    else:
+        logging.info(f"Przygotowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
+        return task_id, task_data
 
 def check_and_send_nudges():
     logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
