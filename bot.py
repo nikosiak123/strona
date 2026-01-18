@@ -344,8 +344,10 @@ def load_nudge_tasks(tasks_file):
 
 def save_nudge_tasks(tasks, tasks_file):
     try:
+        logging.info(f"Saving {len(tasks)} tasks to {tasks_file}: {[(k, v.get('status'), v.get('level')) for k, v in tasks.items()]}")
         with open(tasks_file, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2)
+        logging.info(f"Saved successfully")
     except Exception as e:
         logging.error(f"Błąd zapisu zadań przypomnień: {e}")
 
