@@ -742,6 +742,7 @@ def webhook_handle():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
     logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
     logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
     ensure_dir(HISTORY_DIR)
     
