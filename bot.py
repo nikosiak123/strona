@@ -133,21 +133,15 @@ Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji onl
 
 
 ### Informacje o Usłudze
-1.  **Cennik (za lekcję 60 minut):**
-    - Szkoła Podstawowa: 65 zł
-    - Szkoła średnia (klasy niematuralne, podstawa): 70 zł
-    - Szkoła średnia (klasy niematuralne, rozszerzenie): 75 zł
-    - Szkoła średnia (klasa maturalna, podstawa i rozszerzenie): 80 zł
-2.  **Format lekcji:**
+1.  **Format lekcji:**
     - Korepetycje odbywają się online, 1-na-1 z doświadczonym korepetytorem.
     - Platforma: Microsoft Teams. Wystarczy kliknąć w otrzymany link.
-3. **Korepetytorzy:*
+2. **Korepetytorzy:*
     - Korepetycji udzielają głownie studenci,ale staraj się unikać o tym nie mówić, jeśli użytkownik nie zapyta.
     - Wiekszość naszych korepetytorów ma kilkuletnie doświadczenie z udzielania korepetycji uczniom
     - Korepetycji udzielają osoby z doświadczeniem w prowadzeniu korepetycji online
 
-Aby podać informacje na temat kosztów lekcji, potrzebujemy klasy ucznia oraz poziomu (podstawa lub rozszerzenie), jeśli dotyczy.
-**WAŻNE:** Nigdy nie podawaj ceny lekcji, jeśli nie jesteś pewien klasy ucznia. Zawsze zapytaj o klasę przed przedstawieniem oferty cenowej. Jeśli klient zapyta o cenę bez podania klasy, uprzejmie zapytaj o klasę zamiast podawać cenę.
+Aby przedstawić ofertę, potrzebujemy klasy ucznia oraz poziomu (podstawa lub rozszerzenie), jeśli dotyczy.
 Terminy lekcji są ustalane poprzez stronę rezerwacji.
 
 4. **Wybór korepetytora:**
@@ -163,8 +157,10 @@ Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wia
 2.  **Zbieranie informacji (Szkoła i klasa):** Zapytaj o klasę i typ szkoły ucznia.
 3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły, przejdź od razu do kroku 5.
 4.  **Zbieranie informacji (Poziom):** JEŚLI podany przez klienta typ szkoły to NIE podstawówka, czyli jest to liceum lub technikum ORAZ użytkownik nie podał poziomu (podstawa czy rozszerzenie), w osobnej wiadomości zapytaj o poziom(podstawa czy rozszerzenie).
-5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw cenę i format lekcji.
+5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw ofertę w ściśle określonym formacie: 'Oferta: SZKOŁA: [typ szkoły], KLASA: [klasa], POZIOM: [poziom lub -], FORMAT: online 1-na-1 na Microsoft Teams.' Nie podawaj ceny bezpośrednio; skrypt automatycznie obliczy koszt i zastąpi tę część wiadomości.
 6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji. Podkreślaj, że lekcja testowa jest bez ryzyka, ponieważ płatność następuje dopiero po połączeniu się z korepetytorem.
+
+**WAŻNE:** Gdy prezentujesz ofertę, zawsze używaj dokładnie formatu 'Oferta: SZKOŁA: ..., KLASA: ..., POZIOM: ..., FORMAT: ...'. Cena zostanie dodana automatycznie przez skrypt. Jeśli nie masz wszystkich danych, nie prezentuj oferty.
 
 ### Jak Obsługiwać Sprzeciwy
 - JEŚLI klient ma wątpliwości, zapytaj o ich powód.
@@ -190,6 +186,26 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 # === FUNKCJE POMOCNICZE ==============================================
 # =====================================================================
+
+def calculate_price(school, class_info, level):
+    """Oblicza cenę na podstawie szkoły, klasy i poziomu."""
+    school = school.lower().strip()
+    class_info = class_info.lower().strip()
+    level = level.lower().strip() if level else ""
+
+    if school == "podstawowa":
+        return 65
+    elif school in ["średnia", "liceum", "technikum"]:
+        if "maturalna" in class_info or "maturalne" in class_info:
+            return 80
+        else:
+            if level == "rozszerzenie":
+                return 75
+            elif level == "podstawa" or level == "-":
+                return 70
+            else:
+                return None
+    return None
 
 def send_email_via_brevo(to_email, subject, html_content):
     """Wysyła email przez Brevo API."""
@@ -598,6 +614,34 @@ def process_event(event_payload):
             return
 
         ai_response_raw = get_gemini_response(history, prompt_details)
+
+        # Obsługa oferty
+        if "Oferta:" in ai_response_raw:
+            try:
+                lines = ai_response_raw.split('\n')
+                oferta_line = None
+                for line in lines:
+                    if line.startswith("Oferta:"):
+                        oferta_line = line
+                        break
+                if oferta_line:
+                    import re
+                    match = re.search(r'SZKOŁA:\s*([^,]+),\s*KLASA:\s*([^,]+),\s*POZIOM:\s*([^,]+),\s*FORMAT:\s*(.+)', oferta_line)
+                    if match:
+                        szkola = match.group(1).strip()
+                        klasa = match.group(2).strip()
+                        poziom = match.group(3).strip()
+                        format_ = match.group(4).strip()
+                        price = calculate_price(szkola, klasa, poziom)
+                        if price:
+                            new_oferta = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut, {format_}."
+                            ai_response_raw = ai_response_raw.replace(oferta_line, new_oferta)
+                        else:
+                            logging.warning(f"Nieprawidłowe dane dla ceny: {oferta_line}")
+                    else:
+                        logging.warning(f"Nie udało się sparsować oferty: {oferta_line}")
+            except Exception as e:
+                logging.error(f"Błąd przetwarzania oferty: {e}")
 
         logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
         conversation_status = classify_conversation(history)
