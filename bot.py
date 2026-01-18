@@ -746,7 +746,7 @@ if __name__ == '__main__':
     ensure_dir(HISTORY_DIR)
     
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
-    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=20)
+    scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=60)
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
     
