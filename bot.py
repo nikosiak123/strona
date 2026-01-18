@@ -396,6 +396,7 @@ def check_and_send_nudges():
         return
     tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
     logging.info(f"[Scheduler] Załadowano {len(tasks)} zadań przypomnień.")
+    logging.info(f"Tasks: {[ (k, v.get('status'), v.get('level')) for k, v in tasks.items() ]}")
     now = datetime.now(pytz.timezone(TIMEZONE))
     tasks_to_modify = {}
     for task_id, task in list(tasks.items()):
