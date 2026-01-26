@@ -263,38 +263,54 @@ def get_user_profile(psid, page_access_token):
         return None, None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
-    """Sprawdza, czy klient istnieje w Airtable. Jeśli nie, tworzy go, zapisując dane do nowych kolumn."""
+    """Sprawdza, czy klient istnieje. Jeśli nie, tworzy go. Jeśli tak, upewnia się, że ma zdjęcie."""
     if not clients_table_obj:
-        logging.error("Airtable nie jest skonfigurowane, nie można utworzyć klienta.")
+        logging.error("Baza danych nie jest skonfigurowana.")
         return None
 
     try:
+        # Sprawdź czy klient istnieje
         existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
+        
+        # Pobierz dane z FB (będą potrzebne w obu przypadkach)
+        first_name, last_name, profile_pic_url = get_user_profile(psid, page_access_token)
+
         if existing_client:
-            logging.info(f"Klient o PSID {psid} już istnieje w Airtable.")
+            logging.info(f"Klient o PSID {psid} już istnieje.")
+            
+            # --- DODANO: Aktualizacja zdjęcia jeśli brakuje ---
+            fields = existing_client.get('fields', {})
+            current_pic = fields.get('Zdjecie')
+            
+            # Jeśli w bazie nie ma zdjęcia, a udało się je pobrać z FB -> Aktualizuj
+            if not current_pic and profile_pic_url:
+                logging.info(f"Klient {psid} nie ma zdjęcia w bazie. Aktualizuję...")
+                clients_table_obj.update(existing_client['id'], {'Zdjecie': profile_pic_url})
+            # --------------------------------------------------
+            
             return psid
         
+        # Jeśli nie istnieje -> Tworzymy nowego
         logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
-        first_name, last_name, profile_pic_url = get_user_profile(psid, page_access_token)
         
-        # === ZMIANA NAZW PÓL JEST TUTAJ ===
+        # === POPRAWIONE NAZWY KOLUMN (BEZ POLSKICH ZNAKÓW) ===
         new_client_data = {
             "ClientID": psid,
         }
         if first_name:
-            new_client_data["ImięKlienta"] = first_name # Zmieniono z "Imię"
+            new_client_data["ImieKlienta"] = first_name      # Było "ImięKlienta"
         if last_name:
-            new_client_data["NazwiskoKlienta"] = last_name # Zmieniono z "Nazwisko"
+            new_client_data["NazwiskoKlienta"] = last_name   # Ok
         if profile_pic_url:
-            new_client_data["Zdjęcie"] = profile_pic_url
-        # === KONIEC ZMIANY ===
+            new_client_data["Zdjecie"] = profile_pic_url     # Było "Zdjęcie"
+        # =====================================================
             
         clients_table_obj.create(new_client_data)
-        logging.info(f"Pomyślnie utworzono nowego klienta w Airtable dla PSID {psid}.")
+        logging.info(f"Pomyślnie utworzono nowego klienta w bazie dla PSID {psid}.")
         return psid
         
     except Exception as e:
-        logging.error(f"Wystąpił błąd podczas operacji na Airtable dla PSID {psid}: {e}", exc_info=True)
+        logging.error(f"Wystąpił błąd podczas operacji na bazie dla PSID {psid}: {e}", exc_info=True)
         return None
 
 def ensure_dir(directory):
