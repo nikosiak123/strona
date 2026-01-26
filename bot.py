@@ -309,11 +309,11 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
             "ClientID": psid,
         }
         if first_name:
-            new_client_data["ImieKlienta"] = first_name      # Było "ImięKlienta"
+            new_client_data["ImieKlienta"] = first_name
         if last_name:
-            new_client_data["NazwiskoKlienta"] = last_name   # Ok
+            new_client_data["NazwiskoKlienta"] = last_name
         if profile_pic_url:
-            new_client_data["Zdjecie"] = profile_pic_url     # Było "Zdjęcie"
+            new_client_data["Zdjecie"] = profile_pic_url
         # =====================================================
             
         clients_table_obj.create(new_client_data)
@@ -755,9 +755,9 @@ def process_event(event_payload):
                 nudge_time = now + timedelta(minutes=3)
                 nudge_time = adjust_time_for_window(nudge_time)
                 schedule_nudge(sender_id, recipient_id, "pending_expect_reply_1", NUDGE_TASKS_FILE,
-                               nudge_time_iso=nudge_time.isoformat(),
-                               nudge_message="Potrzebują Państwo jeszcze jakiś informacji? Może mają Państwo jeszcze jakieś wątpliwości?",
-                               level=1)
+                                       nudge_time_iso=nudge_time.isoformat(),
+                                       nudge_message="Potrzebują Państwo jeszcze jakiś informacji? Może mają Państwo jeszcze jakieś wątpliwości?",
+                                       level=1)
                 logging.info("Status to EXPECTING_REPLY. Zaplanowano pierwsze przypomnienie.")
             else:
                 logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
