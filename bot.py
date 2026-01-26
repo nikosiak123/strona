@@ -249,17 +249,28 @@ def load_config():
 def get_user_profile(psid, page_access_token):
     """Pobiera imię, nazwisko i zdjęcie profilowe użytkownika z Facebook Graph API."""
     try:
-        # Dodajemy 'profile_pic' do listy pól, o które prosimy
-        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name,profile_pic&access_token={page_access_token}"
+        # ZMIANA: Używamy pola 'picture' zamiast błędnego 'profile_pic'
+        # Dodajemy .type(large) aby uzyskać wyraźne zdjęcie do porównywania
+        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name,picture.type(large)&access_token={page_access_token}"
+        
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         
-        # Zwracamy teraz trzy wartości
-        return data.get("first_name"), data.get("last_name"), data.get("profile_pic")
+        first_name = data.get("first_name")
+        last_name = data.get("last_name")
+        
+        # ZMIANA: Wyciągamy URL z zagnieżdżonego obiektu JSON
+        # Struktura to: picture -> data -> url
+        profile_pic_url = data.get("picture", {}).get("data", {}).get("url")
+        
+        return first_name, last_name, profile_pic_url
         
     except requests.exceptions.RequestException as e:
         logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
+        # Logujemy dokładną treść błędu od Facebooka, żeby widzieć co poszło nie tak
+        if hasattr(e, 'response') and e.response is not None:
+             logging.error(f"Treść błędu FB: {e.response.text}")
         return None, None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
