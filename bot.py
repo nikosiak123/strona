@@ -249,9 +249,8 @@ def load_config():
 def get_user_profile(psid, page_access_token):
     """Pobiera imię, nazwisko i zdjęcie profilowe użytkownika z Facebook Graph API."""
     try:
-        # ZMIANA: Używamy pola 'picture' zamiast błędnego 'profile_pic'
-        # Dodajemy .type(large) aby uzyskać wyraźne zdjęcie do porównywania
-        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name,picture.type(large)&access_token={page_access_token}"
+        # Uproszczenie: Usuwamy pobieranie zdjęcia profilowego zgodnie z instrukcją
+        url = f"https://graph.facebook.com/v19.0/{psid}?fields=first_name,last_name&access_token={page_access_token}"
         
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -260,11 +259,7 @@ def get_user_profile(psid, page_access_token):
         first_name = data.get("first_name")
         last_name = data.get("last_name")
         
-        # ZMIANA: Wyciągamy URL z zagnieżdżonego obiektu JSON
-        # Struktura to: picture -> data -> url
-        profile_pic_url = data.get("picture", {}).get("data", {}).get("url")
-        
-        return first_name, last_name, profile_pic_url
+        return first_name, last_name, None # Zwracamy None zamiast profile_pic_url
         
     except requests.exceptions.RequestException as e:
         logging.error(f"Błąd pobierania profilu FB dla PSID {psid}: {e}")
@@ -274,7 +269,7 @@ def get_user_profile(psid, page_access_token):
         return None, None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
-    """Sprawdza, czy klient istnieje. Jeśli nie, tworzy go. Jeśli tak, upewnia się, że ma zdjęcie."""
+    """Sprawdza, czy klient istnieje. Jeśli nie, tworzy go."""
     if not clients_table_obj:
         logging.error("Baza danych nie jest skonfigurowana.")
         return None
@@ -284,27 +279,17 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
         existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
         
         # Pobierz dane z FB (będą potrzebne w obu przypadkach)
-        first_name, last_name, profile_pic_url = get_user_profile(psid, page_access_token)
+        # Zwraca (first_name, last_name, None)
+        first_name, last_name, _ = get_user_profile(psid, page_access_token)
 
         if existing_client:
             logging.info(f"Klient o PSID {psid} już istnieje.")
-            
-            # --- DODANO: Aktualizacja zdjęcia jeśli brakuje ---
-            fields = existing_client.get('fields', {})
-            current_pic = fields.get('Zdjecie')
-            
-            # Jeśli w bazie nie ma zdjęcia, a udało się je pobrać z FB -> Aktualizuj
-            if not current_pic and profile_pic_url:
-                logging.info(f"Klient {psid} nie ma zdjęcia w bazie. Aktualizuję...")
-                clients_table_obj.update(existing_client['id'], {'Zdjecie': profile_pic_url})
-            # --------------------------------------------------
-            
             return psid
         
         # Jeśli nie istnieje -> Tworzymy nowego
         logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
         
-        # === POPRAWIONE NAZWY KOLUMN (BEZ POLSKICH ZNAKÓW) ===
+        # === PRZYGOTOWANIE DANYCH KLIENTA (BEZ ZDJĘCIA) ===
         new_client_data = {
             "ClientID": psid,
         }
@@ -312,8 +297,6 @@ def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj
             new_client_data["ImieKlienta"] = first_name
         if last_name:
             new_client_data["NazwiskoKlienta"] = last_name
-        if profile_pic_url:
-            new_client_data["Zdjecie"] = profile_pic_url
         # =====================================================
             
         clients_table_obj.create(new_client_data)
