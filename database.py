@@ -253,29 +253,46 @@ class DatabaseTable:
     def _convert_formula_to_sql(self, formula: str) -> tuple:
         if not formula: return ("1=1", [])
         
-        # Pattern: {Field} = 'value'
         simple_eq = re.search(r"\{([^}]+)\}\s*=\s*'([^']*)'", formula)
         if simple_eq and 'AND' not in formula and 'OR' not in formula:
-            return (f"{simple_eq.group(1)} = ?", [simple_eq.group(2)])
+            return (f'"{simple_eq.group(1)}"' + " = ?", [simple_eq.group(2)])
         
-        # Pattern: AND({Field1} = 'value1', ...)
-        and_pattern = re.findall(r"AND\(([^)]+)\)", formula)
+        and_pattern = re.findall(r"AND\((.+)\)", formula, re.DOTALL)
         if and_pattern:
+            content = and_pattern[0]
+            parts = []
+            in_parens = False
+            last_split = 0
+            for i, char in enumerate(content):
+                if char == '(':
+                    in_parens = True
+                elif char == ')':
+                    in_parens = False
+                elif char == ',' and not in_parens:
+                    parts.append(content[last_split:i].strip())
+                    last_split = i + 1
+            parts.append(content[last_split:].strip())
+
             conditions, params = [], []
-            # Use regex to find all conditions to avoid splitting issues
-            part_pattern = re.compile(r"(\{.+?\}\s*=\s*'.+?'|DATETIME_FORMAT\(.+?\)\s*=\s*'.+?')")
-            parts = part_pattern.findall(and_pattern[0])
             for part in parts:
-                eq = re.search(r"\{([^}]+)\}\s*=\s*'([^']*)'", part)
-                if eq:
-                    conditions.append(f"{eq.group(1)} = ?")
-                    params.append(eq.group(2))
-                elif 'DATETIME_FORMAT' in part:
-                    dt = re.search(r"DATETIME_FORMAT\(\{([^}]+)\}[^)]*\)\s*=\s*'([^']*)'", part)
-                    if dt:
-                        conditions.append(f"{dt.group(1)} = ?")
-                        params.append(dt.group(2))
-            if conditions: return (" AND ".join(conditions), params)
+                part = part.strip()
+                if not part: continue
+                
+                eq_match = re.search(r"\{([^}]+)\}\s*=\s*'([^']*)'", part)
+                dt_match = re.search(r"DATETIME_FORMAT\(\{([^}]+)\}.*?\)\s*=\s*'([^']*)'", part)
+
+                if dt_match:
+                    field_name, value = dt_match.groups()
+                    conditions.append(f'"{field_name}" = ?')
+                    params.append(value)
+                elif eq_match:
+                    field_name, value = eq_match.groups()
+                    conditions.append(f'"{field_name}" = ?')
+                    params.append(value)
+
+            if conditions:
+                return (" AND ".join(conditions), params)
+
         return ("1=1", []) # Fallback
 
     def first(self, formula: str = None) -> Optional[Dict]:
