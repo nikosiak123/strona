@@ -254,7 +254,7 @@ class DatabaseTable:
         if not formula: return ("1=1", [])
         
         # Pattern: {Field} = 'value'
-        simple_eq = re.search(r"\{(\w+)\}\s*=\s*'([^']*)'", formula)
+        simple_eq = re.search(r"\{([^}]+)\}\s*=\s*'([^']*)'", formula)
         if simple_eq and 'AND' not in formula and 'OR' not in formula:
             return (f"{simple_eq.group(1)} = ?", [simple_eq.group(2)])
         
@@ -266,12 +266,12 @@ class DatabaseTable:
             part_pattern = re.compile(r"(\{.+?\}\s*=\s*'.+?'|DATETIME_FORMAT\(.+?\)\s*=\s*'.+?')")
             parts = part_pattern.findall(and_pattern[0])
             for part in parts:
-                eq = re.search(r"\{(\w+)\}\s*=\s*'([^']*)'", part)
+                eq = re.search(r"\{([^}]+)\}\s*=\s*'([^']*)'", part)
                 if eq:
                     conditions.append(f"{eq.group(1)} = ?")
                     params.append(eq.group(2))
                 elif 'DATETIME_FORMAT' in part:
-                    dt = re.search(r"DATETIME_FORMAT\(\{(\w+)\}[^)]*\)\s*=\s*'([^']*)'", part)
+                    dt = re.search(r"DATETIME_FORMAT\(\{([^}]+)\}[^)]*\)\s*=\s*'([^']*)'", part)
                     if dt:
                         conditions.append(f"{dt.group(1)} = ?")
                         params.append(dt.group(2))
@@ -282,6 +282,7 @@ class DatabaseTable:
         conn = get_connection()
         cursor = conn.cursor()
         where, params = self._convert_formula_to_sql(formula)
+        print(f"DATABASE_FIRST: WHERE='{where}', PARAMS={params}") # DEBUGGING LINE
         cursor.execute(f"SELECT * FROM {self.table_name} WHERE {where} LIMIT 1", params)
         row = cursor.fetchone()
         conn.close()
