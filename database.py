@@ -282,6 +282,7 @@ class DatabaseTable:
         conn = get_connection()
         cursor = conn.cursor()
         where, params = self._convert_formula_to_sql(formula)
+        print(f"DATABASE_FIRST: WHERE='{where}', PARAMS={params}") # DEBUGGING LINE
         cursor.execute(f"SELECT * FROM {self.table_name} WHERE {where} LIMIT 1", params)
         row = cursor.fetchone()
         conn.close()
