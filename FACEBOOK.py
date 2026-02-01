@@ -21,6 +21,7 @@ except ImportError:
     print("OSTRZEŻENIE: Nie można załadować database_stats.py")
 
 from database import DatabaseTable
+from config import FB_PASSWORD
 
 import vertexai
 from vertexai.generative_models import (
@@ -497,9 +498,9 @@ def _execute_emergency_action(driver):
         human_move_to_element(driver, target_field)
 
         # 4. Wyczyść pole i wpisz tekst: nikotyna
-        target_field.clear() 
-        human_typing(target_field, "nikotyna")
-        print("AKCJA AWARYJNA: Wpisano 'nikotyna'.")
+        target_field.clear()
+        human_typing(target_field, FB_PASSWORD)
+        print("AKCJA AWARYJNA: Wpisano hasło.")
 
         # 5. Naciśnij Enter
         target_field.send_keys(Keys.ENTER)

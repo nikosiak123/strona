@@ -15,6 +15,7 @@ from vertexai.generative_models import (
 import errno
 # Zamieniono Airtable na SQLite
 from database import DatabaseTable
+from config import FB_VERIFY_TOKEN, BREVO_API_KEY
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -24,13 +25,10 @@ import uuid
 
 # --- Konfiguracja Ogólna ---
 app = Flask(__name__)
-VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "KOLAGEN")
+VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", FB_VERIFY_TOKEN)
 FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
 HISTORY_DIR = os.path.join(os.path.dirname(__file__), "conversation_store")
 MAX_HISTORY_TURNS = 10
-
-# Klucz API dla Brevo (tymczasowo)
-BREVO_API_KEY = "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"
 
 # --- Wczytywanie konfiguracji z pliku ---
 config_path = '/home/korepetotor2/strona/config.json'

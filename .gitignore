@@ -1,25 +1,2 @@
-# SQLite database
-korki.db
-korki.db-journal
-
-# Python
-__pycache__/
-*.pyc
-venv/
-
-# Config files with secrets
-config.json
-
-# Conversation history
-conversation_store/
-
-# Nudge tasks
-nudge_tasks.json
-
-# IDE
-.vscode/
-.idea/
-
-# Facebook stats database
-facebook_stats.db
-facebook_stats.db-journal
+# Configuration file
+config.py
