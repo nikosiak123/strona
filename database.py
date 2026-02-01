@@ -185,15 +185,21 @@ class DatabaseTable:
         
         # 1. Konwersja List -> JSON String
         if self.table_name == 'Korepetytorzy':
-            for list_col in ['Przedmioty', 'PoziomNauczania']:
+            # Lista wszystkich kolumn, które mogą być listami
+            columns_to_json = [
+                'Przedmioty', 'PoziomNauczania', 
+                'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota', 'Niedziela'
+            ]
+            
+            for list_col in columns_to_json:
                 if list_col in clean_fields:
                     val = clean_fields[list_col]
                     if isinstance(val, list):
+                        # To jest kluczowe: zamiana listy ['8:00'] na tekst '["8:00"]'
                         clean_fields[list_col] = json.dumps(val)
                     elif isinstance(val, str) and not val.startswith('['):
                         # Jeśli ktoś podał string zamiast listy, napraw to
                         clean_fields[list_col] = json.dumps([val])
-
         # 2. Konwersja Boolean -> 0/1
         bool_fields = []
         if self.table_name == 'Rezerwacje':
