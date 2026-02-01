@@ -146,7 +146,10 @@ class DatabaseTable:
         
         # 1. Obsługa list (JSON)
         if self.table_name == 'Korepetytorzy':
-            for list_col in ['Przedmioty', 'PoziomNauczania']:
+            # DODAJEMY DNI TYGODNIA DO TEJ LISTY
+            days_and_lists = ['Przedmioty', 'PoziomNauczania', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota', 'Niedziela']
+            
+            for list_col in days_and_lists:
                 val = fields.get(list_col)
                 if isinstance(val, str):
                     try:
