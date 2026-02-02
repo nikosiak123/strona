@@ -267,42 +267,30 @@ def get_user_profile(psid, page_access_token):
         return None, None, None
 
 def create_or_find_client_in_airtable(psid, page_access_token, clients_table_obj):
-    """Sprawdza, czy klient istnieje. Jeśli nie, tworzy go."""
     if not clients_table_obj:
-        logging.error("Baza danych nie jest skonfigurowana.")
         return None
 
     try:
-        # Sprawdź czy klient istnieje
         existing_client = clients_table_obj.first(formula=f"{{ClientID}} = '{psid}'")
         
-        # Pobierz dane z FB (będą potrzebne w obu przypadkach)
-        # Zwraca (first_name, last_name, None)
+        # Próba pobrania z FB
         first_name, last_name, _ = get_user_profile(psid, page_access_token)
 
         if existing_client:
-            logging.info(f"Klient o PSID {psid} już istnieje.")
             return psid
         
-        # Jeśli nie istnieje -> Tworzymy nowego
-        logging.info(f"Klient o PSID {psid} nie istnieje. Tworzenie nowego rekordu...")
-        
-        # === PRZYGOTOWANIE DANYCH KLIENTA (BEZ ZDJĘCIA) ===
+        # Tworzenie nowego rekordu
         new_client_data = {
             "ClientID": psid,
+            # Jeśli FB zawiedzie (puste first_name), wpisz Twoje dane awaryjne
+            "ImieKlienta": first_name if first_name else "Wpisz",
+            "NazwiskoKlienta": last_name if last_name else "dane"
         }
-        if first_name:
-            new_client_data["ImieKlienta"] = first_name
-        if last_name:
-            new_client_data["NazwiskoKlienta"] = last_name
-        # =====================================================
             
         clients_table_obj.create(new_client_data)
-        logging.info(f"Pomyślnie utworzono nowego klienta w bazie dla PSID {psid}.")
         return psid
-        
     except Exception as e:
-        logging.error(f"Wystąpił błąd podczas operacji na bazie dla PSID {psid}: {e}", exc_info=True)
+        logging.error(f"Błąd bazy danych: {e}")
         return None
 
 def ensure_dir(directory):
@@ -686,8 +674,27 @@ def process_event(event_payload):
         if AGREEMENT_MARKER in ai_response_raw:
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
+                # --- TWOJE POWIADOMIENIE E-MAIL ---
+                admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
+                subject = f"🚨 NOWY KLIENT - Zgoda na lekcję testową (PSID: {sender_id})"
+                
+                # Budujemy treść maila
+                email_body = f"""
+                <h3>Nowy klient wyraził zgodę na lekcję testową!</h3>
+                <p><strong>PSID użytkownika:</strong> {sender_id}</p>
+                <p>Wystąpił błąd pobierania danych z Facebooka, dlatego w bazie widnieje jako 'Wpisz dane'.</p>
+                <p><strong>ZADANIE:</strong> Czym prędzej zaktualizuj dane tego klienta w panelu administratora.</p>
+                <hr>
+                <p>Link do panelu administracyjnego: <a href="https://zakręcone-korepetycje.pl/panel-systemowy">Otwórz Panel</a></p>
+                """
+                
+                # Wysyłamy maila używając Twojej istniejącej funkcji Brevo
+                send_email_via_brevo(admin_email, subject, email_body)
+                logging.info(f"Wysłano maila do admina o nowej zgodzie (PSID: {sender_id})")
+                # -----------------------------------
+
                 reservation_link = f"https://zakręcone-korepetycje.pl/rezerwacja-testowa.html?clientID={client_id}"
-                final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nProszę wybrać wolny termin. Zarezerwowana lekcja będzie automatycznie potwierdzona. Lekcję testową należy opłacić do 5 minut od połączenia się z korepetytorem. Termin lekcji można odwołać lub przełożyć używajac panelu klienta, do którego dostęp dostaną Państwo po rezerwacji lub ewentualnie kontaktująć się z nami. Link jest personalny proszę nie udostępniać go nikomu. Udostępnienie linku jest równoważne z udostępnieniem dostępu do zarządzania lekcjami. BARDZO PROSIMY O ODWOŁYWANIE lekcji w przypadku rozmyślenia się. W troscę o naszych klientów nie wymagamy płatności przed połączeniem, prosimy o nienadużywanie tego (;"
+                final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\n..."
             else:
                 final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
         else:
