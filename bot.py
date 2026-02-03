@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Wersja: OSTATECZNA (AI + Airtable + Dwuetapowa Analiza + Spersonalizowane Przypomnienia)
-from config import ADMIN_EMAIL_NOTIFICATIONS
 from flask import Flask, request, Response
 import threading
 import os
@@ -13,9 +12,8 @@ from vertexai.generative_models import (
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
 import errno
-# Zamieniono Airtable na SQLite
+from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
 from database import DatabaseTable
-from config import FB_VERIFY_TOKEN, BREVO_API_KEY
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -247,7 +245,7 @@ def send_email_via_brevo(to_email, subject, html_content):
             
     except Exception as e:
         logging.error(f"❌ Wyjątek krytyczny w send_email_via_brevo: {e}")
-        
+
 def load_config():
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
