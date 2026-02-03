@@ -212,30 +212,42 @@ def calculate_price(school, class_info, level):
     return None
 
 def send_email_via_brevo(to_email, subject, html_content):
-    """Wysyła email przez Brevo API."""
+    """Wysyła email przez Brevo API z rozszerzonym logowaniem."""
     headers = {
         "accept": "application/json",
         "api-key": BREVO_API_KEY,
         "content-type": "application/json"
     }
+    
+    # Dodajemy timestamp do tematu, żeby Gmail nie łączył wiadomości w wątki
+    unique_subject = f"{subject} [{datetime.now().strftime('%H:%M:%S')}]"
+
     payload = {
         "sender": {
             "name": "Bot Korepetycje",
-            "email": config.get("FROM_EMAIL")
+            "email": FROM_EMAIL
         },
         "to": [{"email": to_email}],
-        "subject": subject,
+        "subject": unique_subject,
         "htmlContent": html_content
     }
+    
     try:
-        response = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
-        if response.status_code == 201:
-            logging.info(f"Email wysłany pomyślnie do {to_email}: {subject}")
-        else:
-            logging.error(f"Błąd wysyłania emaila do {to_email}: {response.status_code} - {response.text}")
-    except Exception as e:
-        logging.error(f"Wyjątek podczas wysyłania emaila: {e}")
+        logging.info(f"EMAIL_DEBUG: Próba wysłania maila do {to_email}...")
+        response = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers, timeout=15)
+        
+        # Logujemy pełną odpowiedź serwera
+        logging.info(f"EMAIL_DEBUG: Status: {response.status_code}")
+        logging.info(f"EMAIL_DEBUG: Odpowiedź serwera: {response.text}")
 
+        if response.status_code == 201:
+            logging.info(f"✅ Email zaakceptowany przez Brevo. ID: {response.json().get('messageId')}")
+        else:
+            logging.error(f"❌ Brevo odrzuciło maila: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        logging.error(f"❌ Wyjątek krytyczny w send_email_via_brevo: {e}")
+        
 def load_config():
     try:
         with open('config.json', 'r', encoding='utf-8') as f:
