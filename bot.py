@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Wersja: OSTATECZNA (AI + Airtable + Dwuetapowa Analiza + Spersonalizowane Przypomnienia)
-
+from config import ADMIN_EMAIL_NOTIFICATIONS
 from flask import Flask, request, Response
 import threading
 import os
@@ -618,7 +618,7 @@ def process_event(event_payload):
             user_msg_lower = user_message_text.lower()
             if "pomoc" in user_msg_lower:
                 # Powiadomienie
-                admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
+                admin_email = ADMIN_EMAIL_NOTIFICATIONS
                 last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
                 html_content = f"<p>Użytkownik {sender_id} poprosił o pomoc po rezerwacji.</p><p>PSID: {sender_id}</p><p>Ostatnie wiadomości:</p><pre>{last_msgs}</pre>"
                 send_email_via_brevo(admin_email, "Prośba o pomoc od użytkownika", html_content)
@@ -675,7 +675,7 @@ def process_event(event_payload):
             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
             if client_id:
                 # --- TWOJE POWIADOMIENIE E-MAIL ---
-                admin_email = config.get("ADMIN_EMAIL", "edu.najechalski@gmail.com")
+                admin_email = ADMIN_EMAIL_NOTIFICATIONS
                 subject = f"🚨 NOWY KLIENT - Zgoda na lekcję testową (PSID: {sender_id})"
                 
                 # Budujemy treść maila
