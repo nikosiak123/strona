@@ -221,7 +221,7 @@ def send_email_via_brevo(to_email, subject, html_content):
     payload = {
         "sender": {
             "name": "Bot Korepetycje",
-            "email": config.get("FROM_EMAIL", "bot@korepetycje.pl")
+            "email": config.get("FROM_EMAIL")
         },
         "to": [{"email": to_email}],
         "subject": subject,
