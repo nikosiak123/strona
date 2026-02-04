@@ -641,35 +641,66 @@ def process_event(event_payload):
             send_message_with_typing(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
             return
 
-        ai_response_raw = get_gemini_response(history, prompt_details)
+        # --- LOGIKA WERYFIKACJI OFERTY Z PĘTLĄ POPRAWEK ---
+        max_retries = 3
+        attempts = 0
+        valid_response = False
+        ai_response_raw = ""
 
-        # Obsługa oferty
-        if "Oferta:" in ai_response_raw:
-            try:
+        while attempts < max_retries and not valid_response:
+            attempts += 1
+            # Próba generowania odpowiedzi
+            ai_response_raw = get_gemini_response(history, prompt_details)
+            
+            if "Oferta:" in ai_response_raw:
+                # Szukamy linii zaczynającej się od Oferta:
                 lines = ai_response_raw.split('\n')
-                oferta_line = None
-                for line in lines:
-                    if line.startswith("Oferta:"):
-                        oferta_line = line
-                        break
+                oferta_line = next((line for line in lines if line.strip().startswith("Oferta:")), None)
+                
                 if oferta_line:
                     import re
+                    # Wyciąganie danych za pomocą Regex
                     match = re.search(r'SZKOŁA:\s*([^,]+),\s*KLASA:\s*([^,]+),\s*POZIOM:\s*([^,]+),\s*FORMAT:\s*(.+)', oferta_line)
+                    
                     if match:
                         szkola = match.group(1).strip()
                         klasa = match.group(2).strip()
                         poziom = match.group(3).strip()
                         format_ = match.group(4).strip()
+                        
                         price = calculate_price(szkola, klasa, poziom)
+                        
                         if price:
-                            new_oferta = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut, {format_}."
-                            ai_response_raw = ai_response_raw.replace(oferta_line, new_oferta)
+                            # Sukces: Zamieniamy techniczną linię na czytelne zdanie dla klienta
+                            final_offer_text = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut, {format_}."
+                            ai_response_raw = ai_response_raw.replace(oferta_line, final_offer_text)
+                            valid_response = True
                         else:
-                            logging.warning(f"Nieprawidłowe dane dla ceny: {oferta_line}")
+                            # BŁĄD: AI podało dane, których calculate_price nie akceptuje
+                            logging.warning(f"Próba {attempts}: AI podało nieobsługiwane dane ceny: {szkola}, {poziom}. Żądam poprawki.")
+                            
+                            # Dodajemy instrukcję błędu do historii rozmowy (tylko na potrzeby pętli)
+                            correction_msg = Content(role="user", parts=[Part.from_text(
+                                f"BŁĄD: Użyłeś słów, których system nie rozumie: '{szkola}' lub '{poziom}'. "
+                                "Używaj wyłącznie: SZKOŁA: Podstawowa, Liceum lub Technikum. "
+                                "POZIOM: podstawa, rozszerzenie lub -. "
+                                "Wygeneruj ofertę ponownie, trzymając się tych słów."
+                            )])
+                            history.append(correction_msg)
                     else:
-                        logging.warning(f"Nie udało się sparsować oferty: {oferta_line}")
-            except Exception as e:
-                logging.error(f"Błąd przetwarzania oferty: {e}")
+                        logging.warning(f"Próba {attempts}: AI źle sformatowało wzór linii Oferta.")
+                        history.append(Content(role="user", parts=[Part.from_text("BŁĄD: Nieprawidłowy format linii Oferta. Użyj wzoru: SZKOŁA: ..., KLASA: ..., POZIOM: ..., FORMAT: ...")]))
+                else:
+                    # Słowo "Oferta" padło w innym kontekście, uznajemy za poprawną rozmowę
+                    valid_response = True
+            else:
+                # Zwykła rozmowa (nie ma słowa "Oferta:"), odpowiedź jest poprawna
+                valid_response = True
+
+        # Failsafe: Jeśli po 3 próbach AI nadal błądzi
+        if not valid_response:
+            ai_response_raw = "Bardzo przepraszam, mam mały problem techniczny z przygotowaniem wyceny. Proszę o chwilę cierpliwości, zaraz napiszę do Państwa z poprawną informacją."
+        # --- KONIEC LOGIKI WERYFIKACJI ---
 
         logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
         conversation_status = classify_conversation(history)
