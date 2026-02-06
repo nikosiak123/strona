@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 
 # --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
 # Ścieżka do przeglądarki (u Ciebie to Chromium)
-PATH_DO_GOOGLE_CHROME = '/usr/bin/chromium' 
+PATH_DO_GOOGLE_CHROME = '/usr/bin/google-chrome' 
 
 # Ścieżka do sterownika
 PATH_DO_RECZNEGO_CHROMEDRIVER = '/usr/local/bin/chromedriver'
