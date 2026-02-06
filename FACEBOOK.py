@@ -43,8 +43,11 @@ from selenium.webdriver.common.action_chains import ActionChains # NOWY IMPORT
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
-PATH_DO_GOOGLE_CHROME = os.environ.get('CHROME_BIN_PATH', '/usr/bin/google-chrome')
-PATH_DO_RECZNEGO_CHROMEDRIVER = os.environ.get('CHROMEDRIVER_PATH', '/usr/local/bin/chromedriver')
+# Ścieżka do przeglądarki (u Ciebie to Chromium)
+PATH_DO_GOOGLE_CHROME = '/usr/bin/chromium' 
+
+# Ścieżka do sterownika
+PATH_DO_RECZNEGO_CHROMEDRIVER = '/usr/local/bin/chromedriver'
 
 # Usunięto konfigurację Airtable - teraz używamy lokalnej bazy SQLite
 
@@ -526,7 +529,7 @@ def initialize_driver_and_login():
         service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
-        options.add_argument("--headless=new") 
+        #options.add_argument("--headless=new") 
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
         options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
         options.add_argument("--disable-notifications")
@@ -796,7 +799,7 @@ def comment_and_check_status(driver, main_post_container, comment_list):
     
     # ... (logika sprawdzania statusu) ...
 
-    status = "Przesłane"
+    status = "Przeslane"
     wait_short = WebDriverWait(driver, 3)
     
     try:
@@ -822,12 +825,9 @@ def comment_and_check_status(driver, main_post_container, comment_list):
     print(f"    STATUS KOMENTARZA: {status.upper()}")
     
     # Aktualizuj statystyki jeśli komentarz przesłany
-    if status == "Przesłane" and DATABASE_AVAILABLE:
-        from datetime import datetime
-        today = datetime.now().strftime('%Y-%m-%d')
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        # Użyj database_stats jeśli dostępne
-        update_stats(today, 1, now)
+    if status == "Przeslane" and DATABASE_AVAILABLE:
+        # Przekazujemy tylko nazwę kolumny, którą chcemy zwiększyć o 1
+        update_stats("Przeslane")
     
     return status
 
