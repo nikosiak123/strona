@@ -710,12 +710,29 @@ def try_hide_all_from_user(driver, post_container_element, author_name):
         print(f"  SUKCES: Pomyślnie ukryto wszystkie posty od '{author_name}'.")
         return True
     except (NoSuchElementException, TimeoutException) as e:
-        print(f"  BŁĄD: Nie udało się wykonać sekwencji ukrywania. Błąd: {str(e).splitlines()[0]}")
-        log_error_state(driver, "hide_sequence_failed")
+        print(f"  BŁĄD: Menu ukrywania zacięło się. Próbuję uciec klawiszem ESC...")
+        
+        # Próba 1: Naciśnij ESC 3 razy, żeby zamknąć wszelkie modale
         try:
-            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE); random_sleep(0.5, 0.8)
-            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE) 
-        except: pass
+            body = driver.find_element(By.TAG_NAME, 'body')
+            for _ in range(3):
+                body.send_keys(Keys.ESCAPE)
+                random_sleep(0.5, 0.8)
+            
+            # Krótki test: Czy po ESC nadal widać jakiś dialog/nakładkę?
+            # Szukamy czy na ekranie jest jakiś widoczny element o roli 'dialog'
+            dialogs = driver.find_elements(By.XPATH, "//div[@role='dialog']")
+            if any(d.is_displayed() for d in dialogs):
+                print("  INFO: ESC nie pomogło, modale nadal wiszą. Odświeżam stronę...")
+                driver.refresh()
+                random_sleep(5, 8)
+            else:
+                print("  SUKCES: ESC zamknęło menu. Próbuję kontynuować...")
+        except:
+            # Jeśli nawet znalezienie 'body' padło, to znaczy że strona całkiem wisi
+            driver.refresh()
+            random_sleep(5, 8)
+            
         return False
     except Exception as e:
         print(f"  KRYTYCZNY BŁĄD w funkcji `try_hide_all_from_user`: {e}"); traceback.print_exc()
@@ -950,12 +967,18 @@ def process_posts(driver, model):
                             print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
                     
                     elif category == 'OFERUJE':
-                        lower_author_name = author_name.lower()
-                        if any(keyword in lower_author_name for keyword in AUTHOR_FILTER_KEYWORDS):
-                             print(f"INFO: Pomijam ofertę od źródła ({author_name}).")
-                        else:
-                            print(f"❌ ZNALEZIONO OFERTĘ. Uruchamianie procedury ukrywania od '{author_name}'...")
-                            try_hide_all_from_user(driver, main_post_container, author_name)
+                        print(f"❌ ZNALEZIONO OFERTĘ. Próba ukrycia od '{author_name}'...")
+                        success = try_hide_all_from_user(driver, main_post_container, author_name)
+                        
+                        if not success:
+                            # Jeśli ukrywanie zawiodło, wymuszamy powrót do filtrów,
+                            # żeby mieć pewność, że nie jesteśmy na profilu kogoś lub w martwym punkcie
+                            print("  INFO: Problemy z menu. Przywracam stronę główną i filtry...")
+                            if search_and_filter(driver):
+                                page_refreshed_in_loop = True
+                                break # Wychodzi z pętli postów i zaczyna skanowanie od nowa
+                            else:
+                                raise Exception("Nie udało się przywrócić filtrów po błędzie ukrywania")
                     
                     else:
                         print(f"INFO: Pomijanie posta. Kategoria: {category}, Przedmiot: {subject}, Poziom: {level}")
@@ -964,9 +987,8 @@ def process_posts(driver, model):
                     if page_refreshed_in_loop: break
                 
                 # --- BLOK OBSŁUGI BŁĘDÓW WEWNĄTRZ PĘTLI POSTA ---
-                except (StaleElementReferenceException, NoSuchElementException) as e:
-                    logging.warning(f"Element posta stał się nieaktualny. Błąd: {type(e).__name__}")
-                    log_error_state(driver, "post_element_stale")
+                except (StaleElementReferenceException, NoSuchElementException):
+                    # Po prostu kontynuuj bez logowania błędu i robienia zdjęć
                     if page_refreshed_in_loop: break
                     continue
                 except Exception as e:
