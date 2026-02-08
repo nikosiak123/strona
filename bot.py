@@ -28,6 +28,10 @@ FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
 HISTORY_DIR = os.path.join(os.path.dirname(__file__), "conversation_store")
 MAX_HISTORY_TURNS = 10
 
+# --- Debouncing ---
+DEBOUNCE_SECONDS = 5
+last_message_times = {}
+
 # --- Wczytywanie konfiguracji z pliku ---
 config_path = '/home/korepetotor2/strona/config.json'
 try:
@@ -503,16 +507,15 @@ def send_message(recipient_id, message_text, page_access_token):
 def send_message_with_typing(recipient_id, message_text, page_access_token):
     if not all([recipient_id, message_text, page_access_token]): return
     params = {"access_token": page_access_token}
-    # Wyślij typing_on
+    
+    # 1. Wyślij "dymek pisania" (typing_on) - czysto wizualnie
     typing_payload = {"recipient": {"id": recipient_id}, "sender_action": "typing_on"}
     try:
         requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=typing_payload, timeout=30)
     except requests.exceptions.RequestException:
-        pass  # Ignoruj błąd typing_on
-    # Oblicz opóźnienie na podstawie długości wiadomości
-    delay = max(0, min(len(message_text) * 0.05, 10) - 4.5)  # 0.05s na znak, max 10s, minus 4.5s
-    time.sleep(delay)
-    # Wyślij wiadomość
+        pass
+    
+    # 2. Wyślij wiadomość NATYCHMIAST (bez delay i sleep)
     payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
     try:
         r = requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=payload, timeout=30)
@@ -592,9 +595,24 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
 # =====================================================================
 def process_event(event_payload):
     try:
+        sender_id = event_payload.get("sender", {}).get("id")
+        
+        # --- POCZĄTEK ZABEZPIECZENIA (DEBOUNCING) ---
+        current_time = time.time()
+        
+        # Jeśli użytkownik napisał wcześniej niż 5 sekund temu...
+        if sender_id in last_message_times and current_time - last_message_times[sender_id] < DEBOUNCE_SECONDS:
+            logging.info(f"DEBOUNCING: Zignorowano szybką wiadomość od {sender_id}. Resetuję timer (użytkownik musi poczekać kolejne 5s).")
+            # Resetujemy czas - użytkownik "został przyłapany" na pisaniu, więc przedłużamy ciszę
+            last_message_times[sender_id] = current_time
+            return # <--- Zakończ ten wątek, nie odpowiadaj!
+        
+        # Zapisz aktualny czas jako "ostatnia wiadomość"
+        last_message_times[sender_id] = current_time
+        # --- KONIEC ZABEZPIECZENIA ---
+
         logging.info("Wątek 'process_event' wystartował.")
         if not PAGE_CONFIG: return
-        sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
         if event_payload.get("read"):
