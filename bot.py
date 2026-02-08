@@ -593,28 +593,41 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
 # =====================================================================
 # === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
 # =====================================================================
+# =====================================================================
+# === GŁÓWNA LOGIKA PRZETWARZANIA ======================================
+# =====================================================================
 def process_event(event_payload):
     try:
         sender_id = event_payload.get("sender", {}).get("id")
         
-        # --- POCZĄTEK ZABEZPIECZENIA (DEBOUNCING) ---
+        # --- POCZĄTEK ZABEZPIECZENIA (DEBOUNCING) - TEGO BRAKOWAŁO ---
+        # 1. Pobieramy aktualny czas
         current_time = time.time()
         
-        # Jeśli użytkownik napisał wcześniej niż 5 sekund temu...
-        if sender_id in last_message_times and current_time - last_message_times[sender_id] < DEBOUNCE_SECONDS:
-            logging.info(f"DEBOUNCING: Zignorowano szybką wiadomość od {sender_id}. Resetuję timer (użytkownik musi poczekać kolejne 5s).")
-            # Resetujemy czas - użytkownik "został przyłapany" na pisaniu, więc przedłużamy ciszę
-            last_message_times[sender_id] = current_time
-            return # <--- Zakończ ten wątek, nie odpowiadaj!
+        # 2. Sprawdzamy, czy użytkownik już do nas pisał
+        if sender_id in last_message_times:
+            # Obliczamy ile sekund minęło od ostatniej wiadomości
+            time_diff = current_time - last_message_times[sender_id]
+            
+            # Jeśli minęło mniej niż 5 sekund...
+            if time_diff < DEBOUNCE_SECONDS:
+                logging.info(f"DEBOUNCING: Zignorowano wiadomość od {sender_id}. Minęło tylko {time_diff:.2f}s (wymagane {DEBOUNCE_SECONDS}s).")
+                
+                # WAŻNE: Aktualizujemy czas, żeby "przedłużyć ciszę".
+                # Jeśli użytkownik spamuje, licznik startuje od nowa przy każdej wiadomości.
+                last_message_times[sender_id] = current_time
+                return # <--- Zatrzymujemy bota, nie odpisze na tę wiadomość!
         
-        # Zapisz aktualny czas jako "ostatnia wiadomość"
+        # 3. Zapisujemy czas tej wiadomości jako "ostatniej"
         last_message_times[sender_id] = current_time
         # --- KONIEC ZABEZPIECZENIA ---
 
-        logging.info("Wątek 'process_event' wystartował.")
+        logging.info("Wątek 'process_event' wystartował - wiadomość przepuszczona.")
         if not PAGE_CONFIG: return
         recipient_id = event_payload.get("recipient", {}).get("id")
         if not sender_id or not recipient_id or event_payload.get("message", {}).get("is_echo"): return
+        
+        # Obsługa statusu "przeczytano" (read receipt)
         if event_payload.get("read"):
             tasks = load_nudge_tasks(NUDGE_TASKS_FILE)
             for task_id, task in tasks.items():
@@ -627,14 +640,18 @@ def process_event(event_payload):
                     break
             save_nudge_tasks(tasks, NUDGE_TASKS_FILE)
             return
+
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text: return
+        
         cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+        
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
         page_token = page_config.get("token")
         prompt_details = page_config.get("prompt_details")
         page_name = page_config.get("name", "Nieznana Strona")
+        
         history = load_history(sender_id)
         new_msg = Content(role="user", parts=[Part.from_text(user_message_text)])
         new_msg.read = False
@@ -726,7 +743,7 @@ def process_event(event_payload):
         save_history(sender_id, history)
     except Exception as e:
         logging.error(f"KRYTYCZNY BŁĄD w wątku process_event: {e}", exc_info=True)
-
+        
 # =====================================================================
 # === WEBHOOK FLASK I URUCHOMIENIE ====================================
 # =====================================================================
