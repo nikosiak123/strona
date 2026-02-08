@@ -722,10 +722,8 @@ def process_event(event_payload):
         if not user_message_text or event_payload.get("message", {}).get("is_echo"):
             return
 
-    # --- DODAJ TĘ LINIĘ TUTAJ ---
-    # Anulujemy przypomnienie NATYCHMIAST, nie czekając 10 sekund
-    cancel_nudge(sender_id, NUDGE_TASKS_FILE)
-    # ----------------------------
+        # Anulujemy przypomnienie NATYCHMIAST, nie czekając 10 sekund
+        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
 
         logging.info(f"Odebrano wiadomość od {sender_id}: '{user_message_text}'")
 
