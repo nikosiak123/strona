@@ -29,12 +29,9 @@ HISTORY_DIR = os.path.join(os.path.dirname(__file__), "conversation_store")
 MAX_HISTORY_TURNS = 10
 
 # === ZABEZPIECZENIE PRZED SPAMEM (MESSAGE BUFFERING) ===
-# Przechowuje aktywne liczniki (Timery) dla użytkowników
 user_timers = {}
-# Przechowuje listę wiadomości, które użytkownik napisał w danej serii
 user_message_buffers = {}
-# Czas oczekiwania na "koniec myśli" użytkownika
-DEBOUNCE_SECONDS = 5
+DEBOUNCE_SECONDS = 10  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
 
 # --- Wczytywanie konfiguracji z pliku ---
 config_path = '/home/korepetotor2/strona/config.json'
@@ -598,14 +595,8 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
 # === LOGIKA OPÓŹNIONEGO URUCHOMIENIA (AI) ============================
 # =====================================================================
 def handle_conversation_logic(sender_id, recipient_id, combined_text):
-    """Ta funkcja uruchamia się DOPIERO po 5 sekundach ciszy."""
+    """Ta funkcja uruchamia się DOPIERO po X sekundach ciszy."""
     try:
-        # Czyścimy bufory, bo już przetwarzamy te wiadomości
-        if sender_id in user_message_buffers:
-            del user_message_buffers[sender_id]
-        if sender_id in user_timers:
-            del user_timers[sender_id]
-
         logging.info(f"AI START: Przetwarzam zbiorczą wiadomość od {sender_id}: '{combined_text}'")
 
         # --- TUTAJ ZACZYNA SIĘ STARA LOGIKA AI ---
@@ -691,6 +682,7 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
 
 
 # =====================================================================
+# =====================================================================
 # === BUFOROWANIE I ODBIERANIE WIADOMOŚCI =============================
 # =====================================================================
 def process_event(event_payload):
@@ -699,9 +691,8 @@ def process_event(event_payload):
         sender_id = event_payload.get("sender", {}).get("id")
         recipient_id = event_payload.get("recipient", {}).get("id")
         
-        # 1. Obsługa Read Receipts (to musi działać od razu)
+        # 1. Obsługa Read Receipts
         if event_payload.get("read"):
-            # ... (logika read receipt bez zmian - kopiuj-wklej ze starego kodu jeśli potrzebujesz, lub zostaw puste jeśli nie używasz)
             return
 
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
@@ -717,27 +708,32 @@ def process_event(event_payload):
 
         # 3. Anuluj poprzedni timer (jeśli użytkownik znowu napisał, przerywamy odliczanie)
         if sender_id in user_timers:
-            logging.info(f"Anulowano timer dla {sender_id} (użytkownik pisze dalej).")
             user_timers[sender_id].cancel()
 
-        # 4. Ustaw nowy timer na 5 sekund
-        # Gdy czas minie, uruchomi się funkcja `handle_conversation_logic` ze sklejonym tekstem
+        # 4. Ustaw nowy timer (teraz na 10 sekund)
         timer = threading.Timer(DEBOUNCE_SECONDS, lambda: run_delayed_logic(sender_id, recipient_id))
         user_timers[sender_id] = timer
         timer.start()
-        logging.info(f"Ustawiono timer na {DEBOUNCE_SECONDS}s dla {sender_id}. Czekam na ciszę...")
+        logging.info(f"Restart timera dla {sender_id}. Czekam {DEBOUNCE_SECONDS}s na ciszę...")
 
     except Exception as e:
         logging.error(f"Błąd w process_event: {e}", exc_info=True)
 
 def run_delayed_logic(sender_id, recipient_id):
     """Funkcja pomocnicza wywoływana przez Timer."""
-    # Pobierz wszystkie wiadomości z bufora i sklej je spacją
-    messages = user_message_buffers.get(sender_id, [])
-    if not messages: return
+    # POPRAWKA: Używamy pop(), aby pobrać i wyczyścić bufor w jednym kroku
+    # To zapobiega sytuacji, gdzie stara funkcja przetwarzała tekst, a nowa go nie widziała
+    messages = user_message_buffers.pop(sender_id, [])
+    
+    if not messages:
+        return
     
     combined_text = " ".join(messages)
     
+    # Usuwamy timer ze słownika, bo już się wykonał
+    if sender_id in user_timers:
+        del user_timers[sender_id]
+        
     # Uruchom właściwą logikę AI
     handle_conversation_logic(sender_id, recipient_id, combined_text)
         
