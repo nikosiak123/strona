@@ -31,7 +31,7 @@ MAX_HISTORY_TURNS = 10
 # === ZABEZPIECZENIE PRZED SPAMEM (MESSAGE BUFFERING) ===
 user_timers = {}
 user_message_buffers = {}
-DEBOUNCE_SECONDS = 7  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
+DEBOUNCE_SECONDS = 5  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
 
 # --- Wczytywanie konfiguracji z pliku ---
 config_path = '/home/korepetotor2/strona/config.json'
@@ -158,19 +158,31 @@ Kiedy zdobędziesz WSZYSTKIE wymagane dane, Twoja następna odpowiedź MUSI zawi
 
 def calculate_price(school, class_info, level):
     """Oblicza cenę. Funkcja odporna na błędy odmiany i interpunkcji AI."""
-    school = str(school).lower().replace('.', '').strip()
-    class_info = str(class_info).lower().replace('.', '').replace('klasa', '').strip()
-    level = str(level).lower().replace('.', '').strip() if level else ""
+    
+    # LOGOWANIE DANYCH WEJŚCIOWYCH
+    logging.info(f"[CENA_DEBUG] Start obliczeń. Surowe dane -> Szkoła: '{school}', Klasa: '{class_info}', Poziom: '{level}'")
 
-    if any(x in school for x in ["podstawowa", "sp"]):
+    school_norm = str(school).lower().replace('.', '').strip()
+    class_norm = str(class_info).lower().replace('.', '').replace('klasa', '').strip()
+    level_norm = str(level).lower().replace('.', '').strip() if level else ""
+
+    logging.info(f"[CENA_DEBUG] Znormalizowane -> Szkoła: '{school_norm}', Klasa: '{class_norm}', Poziom: '{level_norm}'")
+
+    if any(x in school_norm for x in ["podstawowa", "sp"]):
+        logging.info("[CENA_DEBUG] Wynik: 65 zł (Wykryto szkołę podstawową)")
         return 65
-    elif any(x in school for x in ["liceum", "technikum", "lo", "tech", "średnia", "zawodówka"]):
-        if any(x in class_info for x in ["4", "5", "matura", "maturalna"]):
+    elif any(x in school_norm for x in ["liceum", "technikum", "lo", "tech", "średnia", "zawodówka"]):
+        if any(x in class_norm for x in ["4", "5", "matura", "maturalna"]):
+            logging.info("[CENA_DEBUG] Wynik: 80 zł (Wykryto klasę maturalną)")
             return 80
-        if "rozszerz" in level:
+        if "rozszerz" in level_norm:
+            logging.info("[CENA_DEBUG] Wynik: 75 zł (Wykryto poziom rozszerzony)")
             return 75
         else:
+            logging.info("[CENA_DEBUG] Wynik: 70 zł (Wykryto poziom podstawowy/domyślny)")
             return 70
+    
+    logging.warning(f"[CENA_DEBUG] BŁĄD: Nie dopasowano żadnej reguły cenowej dla szkoły: '{school_norm}'")
     return None
 
 def send_email_via_brevo(to_email, subject, html_content):
@@ -447,6 +459,8 @@ def check_and_send_nudges():
 
 def run_data_extractor_ai(history):
     """AI nr 2: Wyciąga ustrukturyzowane dane z całej rozmowy."""
+    logging.info("[AI_EXTRACTOR] Uruchamiam analizę historii rozmowy...")
+    
     instruction = """
     Przeanalizuj całą rozmowę. Twoim zadaniem jest wyciągnąć 3 kluczowe informacje: szkołę, klasę i poziom.
     Odpowiedź MUSI być w formacie JSON.
@@ -468,10 +482,20 @@ def run_data_extractor_ai(history):
     try:
         response = gemini_model.generate_content(full_prompt)
         clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+        
+        # LOGOWANIE SUROWEJ ODPOWIEDZI AI
+        logging.info(f"[AI_EXTRACTOR] Surowa odpowiedź JSON od Gemini: {clean_text}")
+        
         data = json.loads(clean_text)
+        
+        if data.get("status") == "success":
+            logging.info(f"[AI_EXTRACTOR] SUKCES: Wyciągnięto dane: {data}")
+        else:
+            logging.info(f"[AI_EXTRACTOR] BRAK DANYCH: Brakuje pól: {data.get('missing')}")
+            
         return data
     except (json.JSONDecodeError, AttributeError, Exception) as e:
-        logging.error(f"Błąd ekstraktora AI: {e}. Odpowiedź: {response.text if 'response' in locals() else 'Brak odpowiedzi'}")
+        logging.error(f"[AI_EXTRACTOR] BŁĄD PARSOWANIA: {e}. Odpowiedź modelu: {response.text if 'response' in locals() else 'Brak'}")
         return { "status": "missing_data", "missing": ["szkola", "klasa", "poziom"] }
 
 def run_question_creator_ai(history, missing_fields):
@@ -600,7 +624,6 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         logging.info(f"AI START: Przetwarzam zbiorczą wiadomość od {sender_id}: '{combined_text}'")
 
         # --- TUTAJ ZACZYNA SIĘ STARA LOGIKA AI ---
-        cancel_nudge(sender_id, NUDGE_TASKS_FILE)
         
         page_config = PAGE_CONFIG.get(recipient_id)
         if not page_config: return
@@ -698,6 +721,11 @@ def process_event(event_payload):
         user_message_text = event_payload.get("message", {}).get("text", "").strip()
         if not user_message_text or event_payload.get("message", {}).get("is_echo"):
             return
+
+    # --- DODAJ TĘ LINIĘ TUTAJ ---
+    # Anulujemy przypomnienie NATYCHMIAST, nie czekając 10 sekund
+    cancel_nudge(sender_id, NUDGE_TASKS_FILE)
+    # ----------------------------
 
         logging.info(f"Odebrano wiadomość od {sender_id}: '{user_message_text}'")
 
