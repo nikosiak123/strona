@@ -61,6 +61,7 @@ NUDGE_WINDOW_START, NUDGE_WINDOW_END = 6, 23
 
 # --- Znaczniki i Ustawienia Modelu ---
 AGREEMENT_MARKER = "[ZAPISZ_NA_LEKCJE]"
+PRESENT_OFFER_MARKER = "[PREZENTUJ_OFERTE]" # <--- DODAJ TĘ LINIĘ
 EXPECTING_REPLY = "EXPECTING_REPLY"
 CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
@@ -121,68 +122,29 @@ Przykład (zakładając `__CURRENT_TIME__` = `2025-09-18T15:00:00`):
 - Historia: "...klient: dam znać wieczorem." -> Twoja odpowiedź: `2025-09-18T20:30:00`
 """
 
-SYSTEM_INSTRUCTION_GENERAL = """
+SYSTEM_INSTRUCTION_GENERAL = f"""
 ### O Tobie (Twoja Rola)
-Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji online. Twoim celem jest przekonanie użytkownika do umówienia pierwszej, testowej lekcji.
-- **Styl Komunikacji:** Twoje wiadomości muszą być KRÓTKIE i angażujące. Zawsze kończ je pytaniem. Zawsze zwracaj się do użytkownika per "Państwo". Pamiętaj, że możesz rozmawiać zarówno z rodzicem, jak i bezpośrednio z uczniem. Unikaj używania wykrzykników. NIGDY nie powtarzaj tej samej wiadomości, jeśli jakaś wiadomość znajduje się w historii nie możesz wysłać jej ponownie.
-
-
+Jesteś profesjonalnym i przyjaznym asystentem klienta w centrum korepetycji online. Twoim celem jest zebranie informacji od użytkownika i przygotowanie go do otrzymania oferty.
+- **Styl Komunikacji:** Twoje wiadomości muszą być KRÓTKIE i angażujące. Zawsze kończ je pytaniem. Zawsze zwracaj się do użytkownika per "Państwo".
 
 ### Informacje o Usłudze
-1.  **Format lekcji:**
-    - Korepetycje odbywają się online, 1-na-1 z doświadczonym korepetytorem, nie oferuj korepetycji stacjonarnych, bo ich nie udzielamy.
-    - Platforma: Microsoft Teams. Wystarczy kliknąć w otrzymany link.
-2. **Korepetytorzy:*
-    - Korepetycji udzielają głownie studenci,ale staraj się unikać o tym nie mówić, jeśli użytkownik nie zapyta.
-    - Wiekszość naszych korepetytorów ma kilkuletnie doświadczenie z udzielania korepetycji uczniom
-    - Korepetycji udzielają osoby z doświadczeniem w prowadzeniu korepetycji online
+1.  **Format lekcji:** Korepetycje odbywają się online, 1-na-1 z doświadczonym korepetytorem. Platforma: Microsoft Teams.
+2.  **Korepetytorzy:** Udzielają osoby z wieloletnim doświadczeniem.
+3.  **Wymagane dane:** Potrzebujemy klasy ucznia, typu szkoły oraz poziomu (podstawa/rozszerzenie, jeśli to szkoła średnia).
 
-Aby przedstawić ofertę, potrzebujemy klasy ucznia oraz poziomu (podstawa lub rozszerzenie), jeśli dotyczy.
-Terminy lekcji są ustalane poprzez stronę rezerwacji.
-
-4. **Wybór korepetytora:**
-    - Użytkownik może wybrać konkretnego korepetytora, np. kobietę lub mężczyznę, podczas rezerwacji na stronie.
-5. **Odwoływanie i przekładanie lekcji:**
-    - Lekcje można odwoływać i przekładać bezpłatnie w okresie podanym podczas rezerwacji.
-6. **Płatność za lekcję testową:**
-    - Lekcję testową wyjątkowo można opłacić dopiero po połączeniu się z korepetytorem.
-
-**ZANIM zadasz pytanie o klasę, szkołę, poziom:**
-1. Przeanalizuj CAŁĄ historię czatu wstecz.
-2. Sprawdź, czy użytkownik nie podał tych danych wcześniej (nawet jeśli było to kilka wiadomości temu, przed dyskusją o formacie lekcji).
-3. Jeśli masz część danych (np. wiesz, że to "poziom podstawowy"), NIE PYTAJ O NIE PONOWNIE. Potwierdź, że to wiesz i dopytaj TYLKO o brakujące elementy.
-
+### Prezentacja Oferty (Tag wyzwalający)
+Kiedy zdobędziesz WSZYSTKIE wymagane dane, Twoja następna odpowiedź MUSI zawierać **TYLKO** specjalny tag: `{PRESENT_OFFER_MARKER}`. Nie dodawaj do tej wiadomości żadnego innego tekstu. Skrypt sam wyśle ofertę z ceną.
 
 ### Kluczowe Zadania i Przepływ Rozmowy
-Postępuj zgodnie z poniższą chronologią, **dzieląc rozmowę na krótkie wiadomości i NIE zadając pytań, jeśli znasz już odpowiedź**:
-1.  **Powitanie:** JEŚLI pierwsza wiadomość użytkownika to ogólne powitanie, odpowiedz powitaniem i zapytaj, czy szukają korepetycji. JEŚLI użytkownik od razu pisze, że szuka korepetycji, przejdź bezpośrednio do kroku 2 pomijając krok 1..
-2.  **Zbieranie informacji (Szkoła i klasa):** Zapytaj o klasę i typ szkoły ucznia.
-3.  **Inteligentna analiza:** JEŚLI użytkownik w swojej odpowiedzi poda zarówno klasę, jak i typ szkoły, przejdź od razu do kroku 5.
-4.  **Zbieranie informacji (Poziom):** JEŚLI podany przez klienta typ szkoły to NIE podstawówka, czyli jest to liceum lub technikum ORAZ użytkownik nie podał poziomu (podstawa czy rozszerzenie), w osobnej wiadomości zapytaj o poziom(podstawa czy rozszerzenie).
-5.  **Prezentacja oferty:** Na podstawie zebranych danych, przedstaw ofertę w ściśle określonym formacie: 'Oferta: SZKOŁA: [typ szkoły], KLASA: [klasa], POZIOM: [poziom lub -], FORMAT: online 1-na-1 na Microsoft Teams.' Nie podawaj ceny bezpośrednio; skrypt automatycznie obliczy koszt i zastąpi tę część wiadomości.
-6.  **Zachęta do działania:** Po przedstawieniu oferty, zawsze aktywnie proponuj umówienie pierwszej, testowej lekcji. Podkreślaj, że lekcja testowa jest bez ryzyka, ponieważ płatność następuje dopiero po połączeniu się z korepetytorem.
-
-**WAŻNE:** Gdy prezentujesz ofertę, zawsze używaj dokładnie formatu 'Oferta: SZKOŁA: ..., KLASA: ..., POZIOM: ..., FORMAT: ...'. Cena zostanie dodana automatycznie przez skrypt. Jeśli nie masz wszystkich danych, nie prezentuj oferty.
-
-### Jak Obsługiwać Sprzeciwy
-- **Ogólna zasada:** Nigdy nie kończ rozmowy po pierwszej odmowie. Jeśli klient wyraża jakąkolwiek odmowę, wątpliwości lub sprzeciw (np. "za drogo", "wolę nie lekcje online", "nie chce"), zawsze zapytaj o powód i spróbuj przekonać do rezerwacji testowej lekcji, aby chociaż wypróbować nasze zajęcia, wyjaśniając korzyści (stosunkowo dobra cena - lepsza niż szkoły konkurencyjne, dowolność ustalania terminów, wysokie doświadczenie korepetytorów, personalizowane podejście do potrzeb ucznia, sprawdzone metody nauczania, personalne ustawianie jak wyglądają lekcje z korepetytorem). Próbuj przekonać nawet do trzech razy – dopiero po wielokrotnych, zdecydowanych odmowach zaakceptuj zakończenie rozmowy.
-- JEŚLI klient twierdzi, że uczeń będzie **rozkojarzony**, ODPOWIEDZ: "To częsta obawa, ale proszę się nie martwić. Nasi korepetytorzy prowadzą lekcje w bardzo angażujący sposób."
-- JEŚLI klient twierdzi, że korepetycje online się nie sprawdziły, ZAPYTAJ: "Czy uczeń miał już do czynienia z korepetycjami online 1-na-1, czy doświadczenie opiera się głównie na lekcjach szkolnych z czasów pandemii?". Możesz też używać argumentu: "Korepetytor, korepetytorowi nie równy" jeśli użytkownik już miał korepetycje online z innym korepetytorem
-
-### Obsługa pytań o tożsamość AI
-- Jeśli klient zapyta, czy rozmawia z botem lub AI, odpowiedz uprzejmie, że jesteś automatycznym asystentem obsługującym rozmowy przez Messenger.
-- Jeśli klient chce skontaktować się z człowiekiem, poinformuj, że obsługa klienta przez Messenger jest realizowana przez automatycznego asystenta, a w przypadku potrzeby można skontaktować się pod adresem email: edu.najechalski@gmail.com.
-- Ogólnie unikaj samodzielnego ujawniania, że jesteś botem – skupiaj się na pomocy w umówieniu lekcji.
+1.  **Powitanie:** JEŚLI pierwsza wiadomość użytkownika to powitanie lub pytanie o korepetycje, zapytaj o typ szkoły i klasę ucznia.
+2.  **Zbieranie danych:** Używaj naturalnej konwersacji, aby uzyskać klasę, typ szkoły i poziom. **Zawsze analizuj całą historię, aby nie powtarzać pytań.**
+3.  **Obsługa Sprzeciwów:** Zawsze próbuj przekonać do umówienia pierwszej, testowej lekcji, odpowiadając na obawy.
 
 ### Zakres przedmiotów
-- Obsługujesz WYŁĄCZNIE matematykę. Jeśli rozmówca pyta o inny przedmiot (np. angielski, fizyka, chemia, polski, biologia, historia, informatyka itp.), odpowiedz uprzejmie:
-  "Aktualnie udzielamy korepetycji tylko z matematyki, ale chętnie pomożemy w matematyce."
-- Następnie płynnie przejdź do standardowego przepływu dla matematyki (zebranie klasy/poziomu i przedstawienie oferty).
-- Nigdy nie przedstawiaj oferty ani cen dla innych przedmiotów i nie podejmuj rozmowy merytorycznej z innego przedmiotu poza krótką informacją powyżej.
+- Obsługujesz WYŁĄCZNIE matematykę. Jeśli rozmówca pyta o inny przedmiot, odpowiedz uprzejmie, że obsługujecie tylko matematykę, a następnie wróć do standardowego przepływu (zbieranie klasy i typu szkoły).
 
-### Twój GŁÓWNY CEL i Format Odpowiedzi
-Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcję.
-- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji, Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{agreement_marker}`.
+### Twój GŁÓWNY CEL
+- Kiedy rozpoznasz, że użytkownik jednoznacznie zgadza się na umówienie lekcji, Twoja odpowiedź dla niego MUSI być krótka i MUSI kończyć się specjalnym znacznikiem: `{AGREEMENT_MARKER}`.
 """
 
 # =====================================================================
@@ -190,23 +152,20 @@ Twoim nadrzędnym celem jest uzyskanie od użytkownika zgody na pierwszą lekcj�
 # =====================================================================
 
 def calculate_price(school, class_info, level):
-    """Oblicza cenę na podstawie szkoły, klasy i poziomu."""
-    school = school.lower().strip()
-    class_info = class_info.lower().strip()
-    level = level.lower().strip() if level else ""
+    """Oblicza cenę. Funkcja odporna na błędy odmiany i interpunkcji AI."""
+    school = str(school).lower().replace('.', '').strip()
+    class_info = str(class_info).lower().replace('.', '').replace('klasa', '').strip()
+    level = str(level).lower().replace('.', '').strip() if level else ""
 
-    if school == "podstawowa":
+    if any(x in school for x in ["podstawowa", "sp"]):
         return 65
-    elif school in ["średnia", "liceum", "technikum"]:
-        if "maturalna" in class_info or "maturalne" in class_info:
+    elif any(x in school for x in ["liceum", "technikum", "lo", "tech", "średnia", "zawodówka"]):
+        if any(x in class_info for x in ["4", "5", "matura", "maturalna"]):
             return 80
+        if "rozszerz" in level:
+            return 75
         else:
-            if level == "rozszerzenie":
-                return 75
-            elif level == "podstawa" or level == "-":
-                return 70
-            else:
-                return None
+            return 70
     return None
 
 def send_email_via_brevo(to_email, subject, html_content):
@@ -480,6 +439,56 @@ def check_and_send_nudges():
         logging.info("[Scheduler] Zaktualizowano zadania przypomnień.")
 
 # =====================================================================
+# === NOWE FUNKCJE DLA WYSPECJALIZOWANYCH AI ==========================
+# =====================================================================
+
+def run_data_extractor_ai(history):
+    """AI nr 2: Wyciąga ustrukturyzowane dane z całej rozmowy."""
+    instruction = """
+    Przeanalizuj całą rozmowę. Twoim zadaniem jest wyciągnąć 3 kluczowe informacje: szkołę, klasę i poziom.
+    Odpowiedź MUSI być w formacie JSON.
+    - `szkola`: Jedno ze słów: "Podstawowa", "Liceum", "Technikum". Jeśli ktoś napisał "zawodówka", "technik" lub "LO", potraktuj to odpowiednio.
+    - `klasa`: Tylko cyfra, np. 1, 2, 3, 4, 8.
+    - `poziom`: Jedno ze słów: "podstawa", "rozszerzenie" lub null, jeśli nie dotyczy lub jest to szkoła podstawowa.
+
+    Jeśli brakuje którejś informacji, w `status` wpisz "missing_data" i w `missing` podaj listę brakujących pól.
+
+    Przykład 1 (sukces):
+    { "status": "success", "szkola": "Liceum", "klasa": "4", "poziom": "podstawa" }
+    Przykład 2 (brak danych):
+    { "status": "missing_data", "missing": ["klasa", "poziom"] }
+    """
+    
+    chat_history_text = "\n".join([f"{msg.role}: {msg.parts[0].text}" for msg in history])
+    full_prompt = f"{instruction}\n\nHistoria czatu:\n{chat_history_text}"
+    
+    try:
+        response = gemini_model.generate_content(full_prompt)
+        clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+        data = json.loads(clean_text)
+        return data
+    except (json.JSONDecodeError, AttributeError, Exception) as e:
+        logging.error(f"Błąd ekstraktora AI: {e}. Odpowiedź: {response.text if 'response' in locals() else 'Brak odpowiedzi'}")
+        return { "status": "missing_data", "missing": ["szkola", "klasa", "poziom"] }
+
+def run_question_creator_ai(history, missing_fields):
+    """AI nr 3: Tworzy naturalne pytanie o brakujące dane."""
+    instruction = f"""
+    Jesteś asystentem AI. Twoim zadaniem jest stworzyć jedno, krótkie i naturalne pytanie, aby uzupełnić brakujące dane.
+    Brakuje nam informacji o: {', '.join(missing_fields)}.
+    Na podstawie historii rozmowy, sformułuj pytanie, które będzie logicznie pasować do konwersacji.
+    """
+    
+    full_prompt = [Content(role="user", parts=[Part.from_text(instruction)])] + history
+    
+    try:
+        response = gemini_model.generate_content(full_prompt)
+        return response.text.strip()
+    except Exception as e:
+        logging.error(f"Błąd kreatora pytań AI: {e}")
+        return "Proszę podać więcej szczegółów."
+
+# =====================================================================
 # === FUNKCJE KOMUNIKACJI Z AI ========================================
 # =====================================================================
 def send_message(recipient_id, message_text, page_access_token):
@@ -641,155 +650,62 @@ def process_event(event_payload):
             send_message_with_typing(sender_id, 'Dziękujemy za kontakt. Moja rola asystenta zakończyła się wraz z wysłaniem linku do rezerwacji. W przypadku jakichkolwiek pytań lub problemów, proszę odpowiedzieć na tę wiadomość: "POMOC". Udzielimy odpowiedzi najszybciej, jak to możliwe.', page_token)
             return
 
-        # --- LOGIKA WERYFIKACJI OFERTY Z PĘTLĄ POPRAWEK ---
-        max_retries = 3
-        attempts = 0
-        valid_response = False
-        ai_response_raw = ""
+        # --- NOWA GŁÓWNA LOGIKA Z TRZEMA AI ---
+        
+        # 1. Zawsze generujemy odpowiedź z głównego AI (AI #1)
+        ai_response_raw = get_gemini_response(history, prompt_details)
 
-        while attempts < max_retries and not valid_response:
-            attempts += 1
-            # Próba generowania odpowiedzi
-            ai_response_raw = get_gemini_response(history, prompt_details)
-            
-            if "Oferta:" in ai_response_raw:
-                # Szukamy linii zaczynającej się od Oferta:
-                lines = ai_response_raw.split('\n')
-                oferta_line = next((line for line in lines if line.strip().startswith("Oferta:")), None)
+        # Logika obsługi tagu [PREZENTUJ_OFERTE]
+        if PRESENT_OFFER_MARKER in ai_response_raw:
+            logging.info("Wykryto tag [PREZENTUJ_OFERTE]. Uruchamiam ekstraktor danych...")
+            # 2a. Uruchomienie AI nr 2 (Ekstraktor Danych)
+            extracted_data = run_data_extractor_ai(history)
+
+            if extracted_data.get("status") == "success":
+                price = calculate_price(extracted_data["szkola"], extracted_data["klasa"], extracted_data.get("poziom"))
                 
-                if oferta_line:
-                    import re
-                    # Wyciąganie danych za pomocą Regex
-                    match = re.search(r'SZKOŁA:\s*([^,]+),\s*KLASA:\s*([^,]+),\s*POZIOM:\s*([^,]+),\s*FORMAT:\s*(.+)', oferta_line)
-                    
-                    if match:
-                        szkola = match.group(1).strip()
-                        klasa = match.group(2).strip()
-                        poziom = match.group(3).strip()
-                        format_ = match.group(4).strip()
-                        
-                        price = calculate_price(szkola, klasa, poziom)
-                        
-                        if price:
-                            # Sukces: Zamieniamy techniczną linię na czytelne zdanie dla klienta
-                            final_offer_text = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut, {format_}."
-                            ai_response_raw = ai_response_raw.replace(oferta_line, final_offer_text)
-                            valid_response = True
-                        else:
-                            # BŁĄD: AI podało dane, których calculate_price nie akceptuje
-                            logging.warning(f"Próba {attempts}: AI podało nieobsługiwane dane ceny: {szkola}, {poziom}. Żądam poprawki.")
-                            
-                            # Dodajemy instrukcję błędu do historii rozmowy (tylko na potrzeby pętli)
-                            correction_msg = Content(role="user", parts=[Part.from_text(
-                                f"BŁĄD: Użyłeś słów, których system nie rozumie: '{szkola}' lub '{poziom}'. "
-                                "Używaj wyłącznie: SZKOŁA: Podstawowa, Liceum lub Technikum. "
-                                "POZIOM: podstawa, rozszerzenie lub -. "
-                                "Wygeneruj ofertę ponownie, trzymając się tych słów."
-                            )])
-                            history.append(correction_msg)
-                    else:
-                        logging.warning(f"Próba {attempts}: AI źle sformatowało wzór linii Oferta.")
-                        history.append(Content(role="user", parts=[Part.from_text("BŁĄD: Nieprawidłowy format linii Oferta. Użyj wzoru: SZKOŁA: ..., KLASA: ..., POZIOM: ..., FORMAT: ...")]))
+                if price:
+                    # 2b. Sukces - tworzymy finalną, uproszczoną ofertę
+                    final_offer = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut. Czy chcieliby Państwo umówić pierwszą, testową lekcję?"
+                    send_message_with_typing(sender_id, final_offer, page_token)
+                    history.append(Content(role="model", parts=[Part.from_text(final_offer)]))
                 else:
-                    # Słowo "Oferta" padło w innym kontekście, uznajemy za poprawną rozmowę
-                    valid_response = True
+                    # Błąd AI: Nie rozpoznało danych do ceny (np. klasa 10)
+                    error_msg = "Przepraszam, mam problem z obliczeniem ceny dla podanych danych. Czy mogą Państwo potwierdzić klasę i typ szkoły?"
+                    send_message_with_typing(sender_id, error_msg, page_token)
+                    history.append(Content(role="model", parts=[Part.from_text(error_msg)]))
             else:
-                # Zwykła rozmowa (nie ma słowa "Oferta:"), odpowiedź jest poprawna
-                valid_response = True
+                # 2c. Brak danych - uruchamiamy AI nr 3 (Kreator Pytań)
+                missing_info_message = run_question_creator_ai(history, extracted_data["missing"])
+                
+                # <--- DODAJ TĘ KOREKTĘ DLA AI #1 TUTAJ --->
+                # Wymuś na AI #1, aby nie ponawiało złej odpowiedzi
+                ai_response_raw = missing_info_message
+                # <--- KONIEC KOREKTY --->
 
-        # Failsafe: Jeśli po 3 próbach AI nadal błądzi
-        if not valid_response:
-            ai_response_raw = "Bardzo przepraszam, mam mały problem techniczny z przygotowaniem wyceny. Proszę o chwilę cierpliwości, zaraz napiszę do Państwa z poprawną informacją."
-        # --- KONIEC LOGIKI WERYFIKACJI ---
+                send_message_with_typing(sender_id, missing_info_message, page_token)
+                history.append(Content(role="model", parts=[Part.from_text(missing_info_message)]))
 
-        logging.info("Uruchamiam analityka AI (Etap 1: Klasyfikacja)...")
-        conversation_status = classify_conversation(history)
-        logging.info(f"AI (Klasyfikacja) zwróciło status: {conversation_status}")
-        follow_up_time_iso = None
-        if conversation_status == FOLLOW_UP_LATER:
-            logging.info("Uruchamiam analityka AI (Etap 2: Estymacja czasu)...")
-            follow_up_time_iso = estimate_follow_up_time(history)
-            logging.info(f"AI (Estymacja) zwróciło czas: {follow_up_time_iso}")
-
-        final_message_to_user = ""
-        if AGREEMENT_MARKER in ai_response_raw:
-            client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
-            if client_id:
-                # --- TWOJE POWIADOMIENIE E-MAIL ---
+        # Logika obsługi tagu [ZAPISZ_NA_LEKCJE]
+        elif AGREEMENT_MARKER in ai_response_raw:
+             client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
+             if client_id:
                 admin_email = ADMIN_EMAIL_NOTIFICATIONS
                 subject = f"🚨 NOWY KLIENT - Zgoda na lekcję testową (PSID: {sender_id})"
-                
-                # Budujemy treść maila
-                email_body = f"""
-                <h3>Nowy klient wyraził zgodę na lekcję testową!</h3>
-                <p><strong>PSID użytkownika:</strong> {sender_id}</p>
-                <p>Wystąpił błąd pobierania danych z Facebooka, dlatego w bazie widnieje jako 'Wpisz dane'.</p>
-                <p><strong>ZADANIE:</strong> Czym prędzej zaktualizuj dane tego klienta w panelu administratora.</p>
-                <hr>
-                <p>Link do panelu administracyjnego: <a href="https://zakręcone-korepetycje.pl/panel-systemowy">Otwórz Panel</a></p>
-                """
-                
-                # Wysyłamy maila używając Twojej istniejącej funkcji Brevo
+                email_body = f"<h3>Nowy klient wyraził zgodę na lekcję!</h3><p><strong>PSID:</strong> {sender_id}</p><p>Zaktualizuj dane w panelu.</p>"
                 send_email_via_brevo(admin_email, subject, email_body)
-                logging.info(f"Wysłano maila do admina o nowej zgodzie (PSID: {sender_id})")
-                # -----------------------------------
-
+                
                 reservation_link = f"https://zakręcone-korepetycje.pl/rezerwacja-testowa.html?clientID={client_id}"
-                final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\n..."
-            else:
-                final_message_to_user = "Wystąpił błąd z naszym systemem rezerwacji."
+                final_message_to_user = f"Świetnie! Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nProszę wybrać wolny termin. Lekcję można opłacić dopiero po połączeniu z korepetytorem."
+                send_message_with_typing(sender_id, final_message_to_user, page_token)
+                history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
+             else:
+                send_message_with_typing(sender_id, "Wystąpił błąd z systemem rezerwacji.", page_token)
+
         else:
-            final_message_to_user = ai_response_raw
-
-        history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
-        history[-1].timestamp = str(datetime.now(pytz.timezone(TIMEZONE)).isoformat())
-
-        send_message_with_typing(sender_id, final_message_to_user, page_token)
-
-        if AGREEMENT_MARKER in ai_response_raw:
-            # Oznacz początek trybu po rezerwacji
-            history.append(Content(role="model", parts=[Part.from_text("POST_RESERVATION_MODE")]))
-
-        # Oznacz wiadomość użytkownika jako przeczytaną
-        mark_seen_params = {"access_token": page_token}
-        mark_seen_payload = {"recipient": {"id": sender_id}, "sender_action": "mark_seen"}
-        try:
-            requests.post(FACEBOOK_GRAPH_API_URL, params=mark_seen_params, json=mark_seen_payload, timeout=30)
-            logging.info(f"Oznaczono wiadomość od {sender_id} jako przeczytaną.")
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Błąd oznaczania wiadomości jako przeczytanej dla {sender_id}: {e}")
-
-        if AGREEMENT_MARKER not in ai_response_raw:  # Nie planuj przypomnień po wysłaniu linku do lekcji
-            if conversation_status == FOLLOW_UP_LATER and follow_up_time_iso:
-                try:
-                    nudge_time_naive = datetime.fromisoformat(follow_up_time_iso)
-                    local_tz = pytz.timezone(TIMEZONE)
-                    nudge_time = local_tz.localize(nudge_time_naive)
-                    now = datetime.now(pytz.timezone(TIMEZONE))
-                    if now < nudge_time < (now + timedelta(hours=FOLLOW_UP_WINDOW_HOURS)):
-                        logging.info("Status to FOLLOW_UP_LATER. Data jest poprawna. Generuję spersonalizowane przypomnienie...")
-                        follow_up_message = get_gemini_response(history, prompt_details, is_follow_up=True)
-                        logging.info(f"AI (przypomnienie) wygenerowało: '{follow_up_message}'")
-                        schedule_nudge(sender_id, recipient_id, "pending_follow_up",
-                                       tasks_file=NUDGE_TASKS_FILE,
-                                       nudge_time_iso=nudge_time.isoformat(),
-                                       nudge_message=follow_up_message)
-                    else:
-                        logging.warning(f"AI zwróciło nielogiczną datę ({follow_up_time_iso}). Ignoruję przypomnienie.")
-                except ValueError:
-                    logging.error(f"AI zwróciło nieprawidłowy format daty: {follow_up_time_iso}. Ignoruję przypomnienie.")
-            elif conversation_status == EXPECTING_REPLY:
-                # Schedule first reminder after 12h
-                now = datetime.now(pytz.timezone(TIMEZONE))
-                nudge_time = now + timedelta(hours=12)
-                nudge_time = adjust_time_for_window(nudge_time)
-                schedule_nudge(sender_id, recipient_id, "pending_expect_reply_1", NUDGE_TASKS_FILE,
-                                       nudge_time_iso=nudge_time.isoformat(),
-                                       nudge_message="Potrzebują Państwo jeszcze jakiś informacji? Może mają Państwo jeszcze jakieś wątpliwości?",
-                                       level=1)
-                logging.info("Status to EXPECTING_REPLY. Zaplanowano pierwsze przypomnienie.")
-            else:
-                logging.info(f"Status to {conversation_status}. NIE planuję przypomnienia.")
+            # 3. Normalna rozmowa - po prostu wysyłamy odpowiedź AI nr 1
+            send_message_with_typing(sender_id, ai_response_raw, page_token)
+            history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
         save_history(sender_id, history)
     except Exception as e:
