@@ -31,7 +31,7 @@ MAX_HISTORY_TURNS = 10
 # === ZABEZPIECZENIE PRZED SPAMEM (MESSAGE BUFFERING) ===
 user_timers = {}
 user_message_buffers = {}
-DEBOUNCE_SECONDS = 10  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
+DEBOUNCE_SECONDS = 7  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
 
 # --- Wczytywanie konfiguracji z pliku ---
 config_path = '/home/korepetotor2/strona/config.json'
