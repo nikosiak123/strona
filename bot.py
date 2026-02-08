@@ -369,8 +369,6 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
 
 def check_and_send_nudges():
-    logging.info(f"[{datetime.now(pytz.timezone(TIMEZONE)).strftime('%H:%M:%S')}] [Scheduler] Uruchamiam sprawdzanie przypomnień...")
-    logging.info(f"[Scheduler] Start sprawdzania o {datetime.now(pytz.timezone(TIMEZONE)).isoformat()}")
     page_config_from_file = load_config().get("PAGE_CONFIG", {})
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
