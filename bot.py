@@ -711,18 +711,32 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 send_message_with_typing(sender_id, missing_info_message, page_token)
                 history.append(Content(role="model", parts=[Part.from_text(missing_info_message)]))
 
+# Logika obsługi tagu [ZAPISZ_NA_LEKCJE]
         elif AGREEMENT_MARKER in ai_response_raw:
              client_id = create_or_find_client_in_airtable(sender_id, page_token, clients_table)
              if client_id:
-                # Powiadomienie admina
-                send_email_via_brevo(ADMIN_EMAIL_NOTIFICATIONS, f"Zgoda na lekcję {sender_id}", "Nowy klient!")
+                admin_email = ADMIN_EMAIL_NOTIFICATIONS
+                subject = f"🚨 NOWY KLIENT - Zgoda na lekcję testową (PSID: {sender_id})"
+                email_body = f"<h3>Nowy klient wyraził zgodę na lekcję!</h3><p><strong>PSID:</strong> {sender_id}</p><p>Zaktualizuj dane w panelu.</p>"
+                send_email_via_brevo(admin_email, subject, email_body)
                 
                 reservation_link = f"https://zakręcone-korepetycje.pl/rezerwacja-testowa.html?clientID={client_id}"
-                msg = f"Oto Twój link do rezerwacji:\n\n{reservation_link}\n\nZapraszamy!"
-                send_message_with_typing(sender_id, msg, page_token)
-                history.append(Content(role="model", parts=[Part.from_text(msg)]))
+
+                # --- ZMIANA 1: Zaktualizowana treść wiadomości ---
+                final_message_to_user = f"Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nLekcję testową można wyjątkowo opłacić po połączeniu z korepetytorem."
+                
+                send_message_with_typing(sender_id, final_message_to_user, page_token)
+                
+                # Zapisujemy wiadomość bota do historii
+                history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
+                
+                # --- ZMIANA 2: Dodajemy znacznik zmiany statusu rozmowy ---
+                history.append(Content(role="model", parts=[Part.from_text("POST_RESERVATION_MODE")]))
+                logging.info(f"Użytkownik {sender_id} otrzymał link. Przechodzę w tryb POST_RESERVATION_MODE.")
+                # --------------------------------------------------------
+                
              else:
-                send_message_with_typing(sender_id, "Błąd systemu rezerwacji.", page_token)
+                send_message_with_typing(sender_id, "Wystąpił błąd z systemem rezerwacji.", page_token)
 
         else:
             # Zwykła odpowiedź
