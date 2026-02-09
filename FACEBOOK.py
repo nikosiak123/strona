@@ -907,49 +907,45 @@ def process_posts(driver, model):
     processed_keys = load_processed_post_keys()
     
     no_new_posts_in_a_row = 0
-    consecutive_empty_scans = 0  # NOWY LICZNIK: Puste skany pod rząd
+    consecutive_empty_scans = 0
     max_stale_scrolls = 50
     LICZBA_RODZICOW_DO_GORY = 5
     print(f"Używana stała liczba rodziców do znalezienia kontenera: {LICZBA_RODZICOW_DO_GORY}")
     
-    # --- System limitowania akcji ---
     action_timestamps = []
     LIMIT_30_MIN = 10
     LIMIT_60_MIN = 20
-    # --------------------------------
     
-    # --- System liczenia błędów dla twardego resetu ---
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 3
-    # ---------------------------------
     
     loop_count = 0
     while True:
         loop_count += 1
         print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
         try:
-            # --- 1. SPRAWDZENIE POPRAWNOŚCI LINKU (NOWE) ---
+            # --- ZABEZPIECZENIE: SPRAWDZENIE, CZY BOT SIĘ NIE ZGUBIŁ ---
             current_url = driver.current_url.lower()
-            # Sprawdzamy czy jesteśmy w wyszukiwarce (facebook.com/search...) i czy fraza to korepetycje
-            # Jeśli link nie zawiera 'search' ani 'korepetycji', zakładamy, że bot się zgubił (np. wszedł na profil)
-            if "search" not in current_url and "korepetycji" not in current_url:
+            # Oczekiwany URL powinien zawierać 'search/posts' i 'q=korepetycji'
+            if "search/posts" not in current_url or "korepetycji" not in current_url:
                 print(f"⚠️ OSTRZEŻENIE: Wykryto nieprawidłowy URL: {driver.current_url}")
-                print("INFO: Bot zgubił ścieżkę. Powrót do strony głównej i ponowne wyszukiwanie...")
+                print("INFO: Bot zgubił ścieżkę. Wracam bezpośrednio do wyników wyszukiwania...")
                 
-                driver.get("https://www.facebook.com")
-                random_sleep(3, 5)
+                # Przejdź bezpośrednio do strony z postami
+                driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
+                random_sleep(8, 12)
                 
-                if search_and_filter(driver):
-                    print("SUKCES: Przywrócono widok wyszukiwania.")
-                    consecutive_empty_scans = 0 # Reset liczników po powrocie
-                    no_new_posts_in_a_row = 0
-                else:
-                    print("BŁĄD: Nie udało się przywrócić wyszukiwania. Czekam 30s...")
-                    random_sleep(30, 31)
-                continue # Przejdź do nowej iteracji pętli
-            # -----------------------------------------------
+                # Sprawdź, czy po powrocie nie ma błędu "Strona niedostępna"
+                if handle_fb_unavailable_error(driver):
+                    print("INFO: Strona błędu po powrocie została naprawiona.")
+                
+                # Zresetuj liczniki i przejdź do nowej pętli
+                consecutive_empty_scans = 0
+                no_new_posts_in_a_row = 0
+                continue
+            # -------------------------------------------------------------
 
-            # --- WERYFIKACJA LIMITÓW AKCJI ---
+            # --- Weryfikacja limitów akcji ---
             current_time = time.time()
             action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
             actions_last_30_min = sum(1 for t in action_timestamps if current_time - t < 1800)
@@ -967,37 +963,30 @@ def process_posts(driver, model):
                 time.sleep(wait_time)
                 continue
             print(f"INFO: Stan limitów: {actions_last_30_min}/{LIMIT_30_MIN} (30 min), {actions_last_60_min}/{LIMIT_60_MIN} (60 min).")
-            # --- Koniec weryfikacji limitów ---
-
+            
+            # --- Główna logika przetwarzania ---
             story_message_xpath = "//div[@data-ad-rendering-role='story_message']"
             story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
             
-            # --- 2. OBSŁUGA BRAKU POSTÓW (NOWE) ---
             if not story_elements_on_page:
                 consecutive_empty_scans += 1
                 print(f"OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Próba {consecutive_empty_scans}/3.")
-                
                 if consecutive_empty_scans >= 3:
                     print("⚠️ ALARM: 3 razy pod rząd brak postów. Odświeżam stronę...")
                     driver.refresh()
                     random_sleep(10, 15)
-                    consecutive_empty_scans = 0 # Reset licznika po odświeżeniu
+                    consecutive_empty_scans = 0
                 else:
                     random_sleep(8, 12)
-                
-                continue # Wracamy na początek pętli
+                continue
             else:
-                consecutive_empty_scans = 0 # Zresetuj licznik, jeśli znaleziono posty
-            # --------------------------------------
+                consecutive_empty_scans = 0
 
             new_posts_found_this_scroll = 0
             page_refreshed_in_loop = False
             for i, story_element in enumerate(story_elements_on_page):
                 try:
-                    # Krok 1: Znajdź główny kontener nadrzędny
                     main_post_container = story_element.find_element(By.XPATH, f"./ancestor::*[{LICZBA_RODZICOW_DO_GORY}]")
-                    
-                    # Krok 2: Ekstrakcja autora i treści
                     author_name = "Nieznany"
                     try:
                         author_element = main_post_container.find_element(By.XPATH, ".//strong | .//h3//a | .//h2//a")
@@ -1006,25 +995,20 @@ def process_posts(driver, model):
                     post_text = story_element.text
                     post_key = f"{author_name}_{post_text[:100]}"
 
-                    # Sprawdzanie duplikatów
                     if post_key in processed_keys:
-                        # Opcjonalnie: print(f"--- DUPLIKAT ---")
                         continue
                         
-                    # Sprawdzanie liczby komentarzy (>= 10)
                     try:
                         comment_count_span_xpath = ".//span[contains(text(), 'komentarz') and not(contains(text(), 'Wyświetl więcej'))]"
                         comment_span = main_post_container.find_element(By.XPATH, comment_count_span_xpath)
                         match = re.search(r'(\d+)', comment_span.text)
                         if match and int(match.group(1)) >= 10:
-                            print(f"INFO: Pomijanie posta. Liczba komentarzy ({int(match.group(1))}) jest >= 10.")
                             processed_keys.add(post_key)
                             continue
                     except NoSuchElementException: pass
 
                     new_posts_found_this_scroll += 1
                     
-                    # Krok 4: Klasyfikacja AI i Logowanie
                     print(f"\n[NOWY POST] Analizowanie posta od: {author_name}")
                     classification = classify_post_with_gemini(model, post_text)
                     log_ai_interaction(post_text, classification)
@@ -1032,41 +1016,35 @@ def process_posts(driver, model):
                     
                     if category == 'SZUKAM':
                         should_comment, comment_reason, comment_list_to_use = False, "", COMMENT_TEXTS_STANDARD
-                        
                         if level in ['PODSTAWOWA_1_4', 'STUDIA']:
-                            print(f"INFO: Pomijanie posta. Poziom nauczania ('{level}') jest poza zakresem.")
+                            print(f"INFO: Pomijanie posta. Poziom '{level}' poza zakresem.")
                         else:
                             if level == 'STANDARD_LICEUM': comment_list_to_use = COMMENT_TEXTS_HIGH_SCHOOL
-                            if subject == 'MATEMATYKA': should_comment, comment_reason = True, "Znaleziono: MATEMATYKA"
-                            elif isinstance(subject, list) and 'MATEMATYKA' in subject: should_comment, comment_reason = True, f"Znaleziono MATEMATYKĘ na liście: {subject}"
-                            elif subject == 'NIEZIDENTYFIKOWANY': should_comment, comment_reason = True, "Post 'SZUKAM' bez określonego przedmiotu."
+                            if subject == 'MATEMATYKA' or (isinstance(subject, list) and 'MATEMATYKA' in subject) or subject == 'NIEZIDENTYFIKOWANY':
+                                should_comment, comment_reason = True, "Dopasowanie do matematyki"
                         
                         if should_comment:
-                            print(f"✅✅✅ ZNALEZIONO DOPASOWANIE! Powód: {comment_reason}")
+                            print(f"✅ ZNALEZIONO DOPASOWANIE! Powód: {comment_reason}")
                             comment_status = comment_and_check_status(driver, main_post_container, comment_list_to_use)
                             if comment_status:
                                 action_timestamps.append(time.time())
                                 update_database_stats(comment_status)
-                                print("INFO: Odświeżanie strony po dodaniu komentarza...")
                                 driver.refresh(); random_sleep(4, 7)
                                 page_refreshed_in_loop = True
                         elif level not in ['PODSTAWOWA_1_4', 'STUDIA']:
                             print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
-                    
+
                     elif category == 'OFERUJE':
                         print(f"❌ ZNALEZIONO OFERTĘ. Próba ukrycia od '{author_name}'...")
-                        success = try_hide_all_from_user(driver, main_post_container, author_name)
-                        
-                        if not success:
-                            print("  INFO: Problemy z menu. Przywracam stronę główną i filtry...")
-                            if search_and_filter(driver):
-                                page_refreshed_in_loop = True
-                                break
-                            else:
-                                raise Exception("Nie udało się przywrócić filtrów po błędzie ukrywania")
+                        if not try_hide_all_from_user(driver, main_post_container, author_name):
+                             # Jeśli ukrywanie zawiodło, wymuszamy powrót do filtrów
+                            print("  INFO: Problemy z menu. Przywracam stronę z filtrami...")
+                            driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
+                            random_sleep(8, 12)
+                            page_refreshed_in_loop = True
                     
                     else:
-                        print(f"INFO: Pomijanie posta. Kategoria: {category}, Przedmiot: {subject}, Poziom: {level}")
+                        print(f"INFO: Pomijanie posta. Kategoria: {category}")
                     
                     processed_keys.add(post_key)
                     if page_refreshed_in_loop: break
@@ -1087,7 +1065,7 @@ def process_posts(driver, model):
                 continue
             
             if new_posts_found_this_scroll > 0:
-                print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów. Zapisuję stan...")
+                print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów.")
                 save_processed_post_keys(processed_keys)
                 no_new_posts_in_a_row = 0
             else:
@@ -1099,60 +1077,23 @@ def process_posts(driver, model):
                 driver.refresh(); random_sleep(10, 20)
                 no_new_posts_in_a_row = 0
             else:
-                print("INFO: Scrolluję w dół jak człowiek...")
+                print("INFO: Scrolluję w dół...")
                 human_scroll(driver)
         
         except KeyboardInterrupt:
             break
         except Exception as e:
             consecutive_errors += 1
-            logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
+            logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {e}", exc_info=True)
             log_error_state(driver, "process_loop_fatal")
-            print(f"INFO: Wykryto błąd ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
-            time.sleep(30)
             
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                print(f"\n⚠️ UWAGA: {consecutive_errors} błędów pod rząd! Wykonuję PEŁNY TWARDY RESET...\n")
-                try:
-                    print("INFO: TWARDY RESET - Zamykam i reinicjalizuję przeglądarkę...")
-                    if driver:
-                        try: driver.quit()
-                        except: pass
-                    
-                    random_sleep(5, 10)
-                    
-                    driver = initialize_driver_and_login()
-                    if driver:
-                        if search_and_filter(driver):
-                            print("SUKCES: Twardy reset zakończony. Wznawiam skanowanie...")
-                            consecutive_errors = 0
-                            no_new_posts_in_a_row = 0
-                        else:
-                            print("BŁĄD: Ponowne wyszukiwanie po twardym resecie zawiodło.")
-                            random_sleep(15, 25)
-                    else:
-                        print("BŁĄD: Nie udało się reinicjalizować przeglądarki.")
-                        break
-                except Exception as hard_reset_e:
-                    logging.critical(f"BŁĄD: Twardy reset przeglądarki zawiódł! {hard_reset_e}.")
-                    print("KRYTYCZNY BŁĄD: Twardy reset nie powiódł się. Kończę program.")
-                    break
+                print(f"\n⚠️ UWAGA: {consecutive_errors} błędów pod rząd! Wykonuję TWARDY RESET...")
+                raise # Rzucamy błąd wyżej, do głównego bloku, który restartuje driver
             else:
-                try:
-                    print("INFO: MIĘKKI RESET - Wracam na stronę główną i ponawiam wyszukiwanie...")
-                    driver.get("https://www.facebook.com")
-                    random_sleep(3, 5)
-                    
-                    if search_and_filter(driver):
-                        print("SUKCES: Ponowne wyszukiwanie zakończone. Kontynuuję skanowanie.")
-                        no_new_posts_in_a_row = 0
-                    else:
-                        print("BŁĄD: Ponowne wyszukiwanie zawiodło. Próbuję jeszcze raz za chwilę...")
-                        random_sleep(15, 25)
-                except Exception as reset_e:
-                    logging.critical(f"BŁĄD: Miękki reset zawiódł! {reset_e}. Kontynuuję oczekiwanie.")
-                    random_sleep(25, 35)
-            # --- KONIEC ODZYSKIWANIA ---
+                print("INFO: Próbuję MIĘKKIEGO RESETU - wracam do strony wyszukiwania...")
+                driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
+                random_sleep(15, 25)
 
 # --- Główny Blok Wykonawczy ---
 if __name__ == "__main__":
