@@ -926,20 +926,16 @@ def process_posts(driver, model):
         try:
             # --- ZABEZPIECZENIE: SPRAWDZENIE, CZY BOT SIĘ NIE ZGUBIŁ ---
             current_url = driver.current_url.lower()
-            # Oczekiwany URL powinien zawierać 'search/posts' i 'q=korepetycji'
             if "search/posts" not in current_url or "korepetycji" not in current_url:
                 print(f"⚠️ OSTRZEŻENIE: Wykryto nieprawidłowy URL: {driver.current_url}")
                 print("INFO: Bot zgubił ścieżkę. Wracam bezpośrednio do wyników wyszukiwania...")
                 
-                # Przejdź bezpośrednio do strony z postami
                 driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
                 random_sleep(8, 12)
                 
-                # Sprawdź, czy po powrocie nie ma błędu "Strona niedostępna"
                 if handle_fb_unavailable_error(driver):
                     print("INFO: Strona błędu po powrocie została naprawiona.")
                 
-                # Zresetuj liczniki i przejdź do nowej pętli
                 consecutive_empty_scans = 0
                 no_new_posts_in_a_row = 0
                 continue
@@ -950,15 +946,13 @@ def process_posts(driver, model):
             action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
             actions_last_30_min = sum(1 for t in action_timestamps if current_time - t < 1800)
             if actions_last_30_min >= LIMIT_30_MIN:
-                oldest_in_window = min(t for t in action_timestamps if current_time - t < 1800)
-                wait_time = 1800 - (current_time - oldest_in_window) + random.uniform(5, 15)
+                wait_time = 1800 - (current_time - min(t for t in action_timestamps if current_time - t < 1800)) + random.uniform(5, 15)
                 print(f"INFO: Osiągnięto limit {LIMIT_30_MIN}/30min. Czekam {int(wait_time)} sekund...")
                 time.sleep(wait_time)
                 continue
             actions_last_60_min = len(action_timestamps)
             if actions_last_60_min >= LIMIT_60_MIN:
-                oldest_in_window = min(action_timestamps)
-                wait_time = 3600 - (current_time - oldest_in_window) + random.uniform(5, 15)
+                wait_time = 3600 - (current_time - min(action_timestamps)) + random.uniform(5, 15)
                 print(f"INFO: Osiągnięto limit {LIMIT_60_MIN}/60min. Czekam {int(wait_time)} sekund...")
                 time.sleep(wait_time)
                 continue
@@ -968,6 +962,9 @@ def process_posts(driver, model):
             story_message_xpath = "//div[@data-ad-rendering-role='story_message']"
             story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
             
+            # NOWY LICZNIK: Zliczamy wszystkie posty na ekranie
+            loaded_posts_count = len(story_elements_on_page)
+
             if not story_elements_on_page:
                 consecutive_empty_scans += 1
                 print(f"OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Próba {consecutive_empty_scans}/3.")
@@ -995,20 +992,24 @@ def process_posts(driver, model):
                     post_text = story_element.text
                     post_key = f"{author_name}_{post_text[:100]}"
 
+                    # Sprawdź, czy post był już przetwarzany
                     if post_key in processed_keys:
-                        continue
-                        
+                        continue # Jeśli tak, pomiń i idź do następnego posta
+
+                    # Jeśli doszliśmy tutaj, to post jest NOWY
+                    new_posts_found_this_scroll += 1
+                    
+                    # Sprawdzanie liczby komentarzy (>= 10)
                     try:
                         comment_count_span_xpath = ".//span[contains(text(), 'komentarz') and not(contains(text(), 'Wyświetl więcej'))]"
                         comment_span = main_post_container.find_element(By.XPATH, comment_count_span_xpath)
                         match = re.search(r'(\d+)', comment_span.text)
                         if match and int(match.group(1)) >= 10:
+                            print(f"INFO: Pomijanie posta. Liczba komentarzy ({int(match.group(1))}) jest >= 10.")
                             processed_keys.add(post_key)
                             continue
                     except NoSuchElementException: pass
 
-                    new_posts_found_this_scroll += 1
-                    
                     print(f"\n[NOWY POST] Analizowanie posta od: {author_name}")
                     classification = classify_post_with_gemini(model, post_text)
                     log_ai_interaction(post_text, classification)
@@ -1037,7 +1038,6 @@ def process_posts(driver, model):
                     elif category == 'OFERUJE':
                         print(f"❌ ZNALEZIONO OFERTĘ. Próba ukrycia od '{author_name}'...")
                         if not try_hide_all_from_user(driver, main_post_container, author_name):
-                             # Jeśli ukrywanie zawiodło, wymuszamy powrót do filtrów
                             print("  INFO: Problemy z menu. Przywracam stronę z filtrami...")
                             driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
                             random_sleep(8, 12)
@@ -1064,13 +1064,15 @@ def process_posts(driver, model):
                 save_processed_post_keys(processed_keys)
                 continue
             
+            # --- NOWA LOGIKA RAPORTOWANIA ---
             if new_posts_found_this_scroll > 0:
-                print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów.")
+                print(f"INFO: Przeanalizowano {new_posts_found_this_scroll} nowych postów (z {loaded_posts_count} załadowanych na ekranie). Zapisuję stan...")
                 save_processed_post_keys(processed_keys)
                 no_new_posts_in_a_row = 0
             else:
-                print("INFO: Brak nowych postów na widocznym ekranie.")
+                print(f"INFO: Brak nowych postów na widocznym ekranie, załadowano {loaded_posts_count} postów (które są już w historii).")
                 no_new_posts_in_a_row += 1
+            # --- KONIEC NOWEJ LOGIKI ---
 
             if no_new_posts_in_a_row >= max_stale_scrolls:
                 print(f"INFO: Brak nowych postów od {max_stale_scrolls} scrollowań. Odświeżam stronę...")
