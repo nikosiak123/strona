@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 
 # --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
 # Ścieżka do przeglądarki (u Ciebie to Chromium)
-PATH_DO_GOOGLE_CHROME = '/usr/bin/google-chrome' 
+PATH_DO_GOOGLE_CHROME = '/usr/bin/chromium' 
 
 # Ścieżka do sterownika
 PATH_DO_RECZNEGO_CHROMEDRIVER = '/usr/local/bin/chromedriver'
@@ -555,7 +555,7 @@ def initialize_driver_and_login():
         service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
-        options.add_argument("--headless=new") 
+        #options.add_argument("--headless=new") 
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
         options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
         options.add_argument("--disable-notifications")
@@ -651,62 +651,67 @@ def search_and_filter(driver):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # NAJPIERW: Sprawdź czy FB nie wywalił błędu ze zdjęcia
+            # 1. Sprawdź błąd "Strona nie jest dostępna" (ze zdjęcia nr 1)
             if handle_fb_unavailable_error(driver):
-                print(f"INFO: Wykryto błąd niedostępności, próba {attempt + 1}/{max_retries}")
-                # Po odświeżeniu sprawdzamy jeszcze raz czy jesteśmy na głównej
-                if attempt == max_retries - 1:
+                print("INFO: Naprawiono błąd niedostępności przez odświeżenie. Czekam na ładowanie...")
+                random_sleep(5, 8)
+
+            # 2. Sprawdź, czy już jesteśmy na stronie wyników (ze zdjęcia nr 2)
+            # Jeśli URL zawiera już frazę wyszukiwania, pomijamy wpisywanie!
+            current_url = driver.current_url
+            if "search/top" in current_url and "korepetycji" in current_url:
+                print("DEBUG: Rozpoznano stronę wyników. Pomijam wpisywanie, przechodzę do filtrów.")
+            else:
+                # Jeśli nie jesteśmy na wynikach, idziemy na główną i wpisujemy
+                if "facebook.com/search" not in current_url:
                     driver.get("https://www.facebook.com")
-                    random_sleep(5, 7)
+                    random_sleep(3, 5)
 
-            search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
-            
-            # Czekamy krótko na pole wyszukiwania
-            try:
-                search_input = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
-            except TimeoutException:
-                # Jeśli nie ma pola wyszukiwania, być może nadal jest błąd "Strona niedostępna"
-                if handle_fb_unavailable_error(driver):
-                    continue # Spróbuj pętlę od nowa
-                raise # Jeśli to inny błąd, rzuć wyjątek wyżej
+                search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
+                search_input = wait.until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
+                
+                human_move_to_element(driver, search_input)
+                search_input.click()
+                random_sleep(1, 1.5)
+                
+                # Czyścimy i wpisujemy
+                search_input.send_keys(Keys.CONTROL + "a")
+                search_input.send_keys(Keys.BACKSPACE)
+                human_typing(search_input, "korepetycji")
+                random_sleep(1, 2)
+                search_input.send_keys(Keys.RETURN)
+                random_sleep(5, 8)
 
-            # --- RUCH MYSZY I WPISYWANIE ---
-            human_move_to_element(driver, search_input)
-            search_input.click()
-            
-            # Czyścimy pole (na wypadek gdyby coś tam było)
-            search_input.send_keys(Keys.CONTROL + "a")
-            search_input.send_keys(Keys.BACKSPACE)
-            
-            human_typing(search_input, "korepetycji")
-            random_sleep(1, 2.5)
-            search_input.send_keys(Keys.RETURN)
-            
-            random_sleep(4, 6)
-            
-            # FILTROWANIE: Posty
+            # 3. KLIKANIE FILTRÓW (to robimy zawsze)
+            print("INFO: Szukam filtra 'Posty'...")
             posts_filter_xpath = "//a[@role='link'][.//span[normalize-space(.)='Posty']][not(contains(@href,'/groups/'))]"
+            
+            # Przewijamy lekko, żeby przykryte elementy się odsłoniły
+            driver.execute_script("window.scrollTo(0, 0);")
+            
             posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_xpath)))
             human_safe_click(driver, posts_button, "'Posty' (filtr)")
-            
-            random_sleep(3, 5)
+            random_sleep(4, 6)
 
-            # FILTROWANIE: Najnowsze posty
+            print("INFO: Szukam filtra 'Najnowsze posty'...")
             checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
-            checkbox_element = wait.until(EC.element_to_be_clickable((By.XPATH, checkbox_xpath)))
-            human_safe_click(driver, checkbox_element, "'Najnowsze posty' (checkbox)")
+            checkbox_element = wait.until(EC.presence_of_element_located((By.XPATH, checkbox_xpath)))
             
-            random_sleep(3, 6)
-            print("SUKCES: Wyszukiwanie i filtrowanie zakończone pomyślnie.")
+            # Jeśli checkbox nie jest zaznaczony, kliknij go
+            if not checkbox_element.is_selected():
+                human_safe_click(driver, checkbox_element, "'Najnowsze posty' (checkbox)")
+                random_sleep(3, 5)
+            
+            print("SUKCES: Wyszukiwanie i filtrowanie zakończone.")
             return True
 
         except Exception as e:
             print(f"OSTRZEŻENIE: Próba {attempt + 1} nieudana: {str(e).splitlines()[0]}")
             if attempt < max_retries - 1:
+                print("INFO: Odświeżam i próbuję ponownie...")
                 driver.refresh()
-                random_sleep(5, 10)
+                random_sleep(6, 10)
             else:
-                logging.error(f"Błąd podczas wyszukiwania po {max_retries} próbach.")
                 return False
 
 def try_hide_all_from_user(driver, post_container_element, author_name):
