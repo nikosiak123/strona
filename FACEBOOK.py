@@ -855,15 +855,16 @@ def process_posts(driver, model):
     processed_keys = load_processed_post_keys()
     
     no_new_posts_in_a_row = 0
+    consecutive_empty_scans = 0  # NOWY LICZNIK: Puste skany pod rząd
     max_stale_scrolls = 50
-    LICZBA_RODZICOW_DO_GORY = 5 
+    LICZBA_RODZICOW_DO_GORY = 5
     print(f"Używana stała liczba rodziców do znalezienia kontenera: {LICZBA_RODZICOW_DO_GORY}")
     
-    # --- System limitowania akcji (zmienne muszą być zdefiniowane globalnie/na początku funkcji) ---
+    # --- System limitowania akcji ---
     action_timestamps = []
     LIMIT_30_MIN = 10
     LIMIT_60_MIN = 20
-    # ---------------------------------------------------------------------------------------------
+    # --------------------------------
     
     # --- System liczenia błędów dla twardego resetu ---
     consecutive_errors = 0
@@ -875,6 +876,27 @@ def process_posts(driver, model):
         loop_count += 1
         print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
         try:
+            # --- 1. SPRAWDZENIE POPRAWNOŚCI LINKU (NOWE) ---
+            current_url = driver.current_url.lower()
+            # Sprawdzamy czy jesteśmy w wyszukiwarce (facebook.com/search...) i czy fraza to korepetycje
+            # Jeśli link nie zawiera 'search' ani 'korepetycji', zakładamy, że bot się zgubił (np. wszedł na profil)
+            if "search" not in current_url and "korepetycji" not in current_url:
+                print(f"⚠️ OSTRZEŻENIE: Wykryto nieprawidłowy URL: {driver.current_url}")
+                print("INFO: Bot zgubił ścieżkę. Powrót do strony głównej i ponowne wyszukiwanie...")
+                
+                driver.get("https://www.facebook.com")
+                random_sleep(3, 5)
+                
+                if search_and_filter(driver):
+                    print("SUKCES: Przywrócono widok wyszukiwania.")
+                    consecutive_empty_scans = 0 # Reset liczników po powrocie
+                    no_new_posts_in_a_row = 0
+                else:
+                    print("BŁĄD: Nie udało się przywrócić wyszukiwania. Czekam 30s...")
+                    random_sleep(30, 31)
+                continue # Przejdź do nowej iteracji pętli
+            # -----------------------------------------------
+
             # --- WERYFIKACJA LIMITÓW AKCJI ---
             current_time = time.time()
             action_timestamps = [t for t in action_timestamps if current_time - t < 3600]
@@ -898,10 +920,23 @@ def process_posts(driver, model):
             story_message_xpath = "//div[@data-ad-rendering-role='story_message']"
             story_elements_on_page = driver.find_elements(By.XPATH, story_message_xpath)
             
+            # --- 2. OBSŁUGA BRAKU POSTÓW (NOWE) ---
             if not story_elements_on_page:
-                print("OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Czekam...")
-                random_sleep(8, 12)
-                continue
+                consecutive_empty_scans += 1
+                print(f"OSTRZEŻENIE: Nie znaleziono żadnych treści postów. Próba {consecutive_empty_scans}/3.")
+                
+                if consecutive_empty_scans >= 3:
+                    print("⚠️ ALARM: 3 razy pod rząd brak postów. Odświeżam stronę...")
+                    driver.refresh()
+                    random_sleep(10, 15)
+                    consecutive_empty_scans = 0 # Reset licznika po odświeżeniu
+                else:
+                    random_sleep(8, 12)
+                
+                continue # Wracamy na początek pętli
+            else:
+                consecutive_empty_scans = 0 # Zresetuj licznik, jeśli znaleziono posty
+            # --------------------------------------
 
             new_posts_found_this_scroll = 0
             page_refreshed_in_loop = False
@@ -917,12 +952,12 @@ def process_posts(driver, model):
                         author_name = author_element.text
                     except NoSuchElementException: pass
                     post_text = story_element.text
-                    post_key = f"{author_name}_{post_text[:100]}" 
+                    post_key = f"{author_name}_{post_text[:100]}"
 
                     # Sprawdzanie duplikatów
                     if post_key in processed_keys:
-                        print(f"--- DUPLIKAT POMINIĘTY ---\n  KLUCZ: {post_key}\n  AUTOR: {author_name}\n  TREŚĆ: {post_text[:80]}...\n--------------------------")
-                        continue 
+                        # Opcjonalnie: print(f"--- DUPLIKAT ---")
+                        continue
                         
                     # Sprawdzanie liczby komentarzy (>= 10)
                     try:
@@ -971,12 +1006,10 @@ def process_posts(driver, model):
                         success = try_hide_all_from_user(driver, main_post_container, author_name)
                         
                         if not success:
-                            # Jeśli ukrywanie zawiodło, wymuszamy powrót do filtrów,
-                            # żeby mieć pewność, że nie jesteśmy na profilu kogoś lub w martwym punkcie
                             print("  INFO: Problemy z menu. Przywracam stronę główną i filtry...")
                             if search_and_filter(driver):
                                 page_refreshed_in_loop = True
-                                break # Wychodzi z pętli postów i zaczyna skanowanie od nowa
+                                break
                             else:
                                 raise Exception("Nie udało się przywrócić filtrów po błędzie ukrywania")
                     
@@ -986,9 +1019,7 @@ def process_posts(driver, model):
                     processed_keys.add(post_key)
                     if page_refreshed_in_loop: break
                 
-                # --- BLOK OBSŁUGI BŁĘDÓW WEWNĄTRZ PĘTLI POSTA ---
                 except (StaleElementReferenceException, NoSuchElementException):
-                    # Po prostu kontynuuj bez logowania błędu i robienia zdjęć
                     if page_refreshed_in_loop: break
                     continue
                 except Exception as e:
@@ -997,11 +1028,10 @@ def process_posts(driver, model):
                     if page_refreshed_in_loop: break
                     continue
             
-            # Jeśli pętla została przerwana, bo strona się odświeżyła, musimy zacząć nową pętlę while
             if page_refreshed_in_loop:
                 print("INFO: Strona została odświeżona, rozpoczynam nową pętlę przetwarzania.")
                 no_new_posts_in_a_row = 0
-                save_processed_post_keys(processed_keys) 
+                save_processed_post_keys(processed_keys)
                 continue
             
             if new_posts_found_this_scroll > 0:
@@ -1023,33 +1053,27 @@ def process_posts(driver, model):
         except KeyboardInterrupt:
             break
         except Exception as e:
-            # --- MECHANIZM LICZENIA BŁĘDÓW I TWARDEGO RESETU ---
             consecutive_errors += 1
             logging.critical(f"KRYTYCZNY BŁĄD W GŁÓWNEJ PĘTLI. PRÓBA ODZYSKANIA: {e}", exc_info=True)
             log_error_state(driver, "process_loop_fatal")
             print(f"INFO: Wykryto błąd ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}). Czekam 30 sekund na stabilizację/zapis logów przed resetem...")
             time.sleep(30)
             
-            # Jeśli liczba błędów osiągnęła limit, wykonaj twardy reset
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(f"\n⚠️ UWAGA: {consecutive_errors} błędów pod rząd! Wykonuję PEŁNY TWARDY RESET...\n")
                 try:
                     print("INFO: TWARDY RESET - Zamykam i reinicjalizuję przeglądarkę...")
                     if driver:
-                        try:
-                            driver.quit()
-                        except:
-                            pass
+                        try: driver.quit()
+                        except: pass
                     
-                    # Krótka przerwa przed ponownym zalogowaniem
                     random_sleep(5, 10)
                     
-                    # Ponowna inicjalizacja i logowanie
                     driver = initialize_driver_and_login()
                     if driver:
                         if search_and_filter(driver):
                             print("SUKCES: Twardy reset zakończony. Wznawiam skanowanie...")
-                            consecutive_errors = 0  # Reset licznika
+                            consecutive_errors = 0
                             no_new_posts_in_a_row = 0
                         else:
                             print("BŁĄD: Ponowne wyszukiwanie po twardym resecie zawiodło.")
@@ -1062,13 +1086,11 @@ def process_posts(driver, model):
                     print("KRYTYCZNY BŁĄD: Twardy reset nie powiódł się. Kończę program.")
                     break
             else:
-                # Normalny reset (miękki) - bez reinicjalizacji przeglądarki
                 try:
                     print("INFO: MIĘKKI RESET - Wracam na stronę główną i ponawiam wyszukiwanie...")
                     driver.get("https://www.facebook.com")
                     random_sleep(3, 5)
                     
-                    # Ponowne wyszukiwanie i filtrowanie
                     if search_and_filter(driver):
                         print("SUKCES: Ponowne wyszukiwanie zakończone. Kontynuuję skanowanie.")
                         no_new_posts_in_a_row = 0
