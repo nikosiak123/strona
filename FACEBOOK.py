@@ -423,6 +423,32 @@ Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
         return {'category': "ERROR", 'subject': None, 'level': None}
 
 
+def handle_fb_unavailable_error(driver):
+    """Sprawdza czy wystąpił błąd 'Strona nie jest dostępna' i odświeża jeśli trzeba."""
+    error_keywords = [
+        "Ta strona nie jest teraz dostępna",
+        "Może to być spowodowane błędem technicznym",
+        "Odśwież stronę"
+    ]
+    
+    # Sprawdzamy czy którykolwiek z tekstów jest na stronie
+    page_source = driver.page_source
+    if any(keyword in page_source for keyword in error_keywords):
+        print("⚠️ WYKRYTO: Błąd Facebooka 'Strona niedostępna'. Próbuję naprawić...")
+        
+        try:
+            # Próbujemy kliknąć niebieski przycisk "Odśwież stronę"
+            refresh_button_xpath = "//div[@role='button']//span[text()='Odśwież stronę']"
+            refresh_button = driver.find_element(By.XPATH, refresh_button_xpath)
+            human_safe_click(driver, refresh_button, "Przycisk Odśwież na stronie błędu")
+        except:
+            # Jeśli przycisk nie zadziała, robimy twarde odświeżenie przeglądarki
+            driver.refresh()
+            
+        random_sleep(5, 8)
+        return True
+    return False
+
 # --- ZMODYFIKOWANE FUNKCJE GŁÓWNE ---
 
 def _execute_emergency_action(driver):
@@ -621,46 +647,67 @@ def initialize_driver_and_login():
 def search_and_filter(driver):
     print("--- ROZPOCZYNANIE WYSZUKIWANIA I FILTROWANIA ---")
     wait = WebDriverWait(driver, 20)
-    try:
-        search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
-        search_input = wait.until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
-        
-        # --- RUCH MYSZY: Przed interakcją z polem wyszukiwania ---
-        human_move_to_element(driver, search_input)
-        
-        search_input.click() # Standardowe kliknięcie
-        
-        human_typing(search_input, "korepetycji")
-        random_sleep(1, 2.5)
-        search_input.send_keys(Keys.RETURN)
-        
-        random_sleep(3, 5)
-        
-        posts_filter_xpath = "//a[@role='link'][.//span[normalize-space(.)='Posty']][not(contains(@href,'/groups/'))]"
-        posts_filter_alt_xpath = "//div[@role='list']//div[@role='listitem']//a[@role='link'][.//span[normalize-space(.)='Posty']]"
+    
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_xpath)))
-        except TimeoutException:
-            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_alt_xpath)))
-        
-        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA ---
-        human_safe_click(driver, posts_button, "'Posty' (filtr)")
-        
-        random_sleep(2.5, 4)
+            # NAJPIERW: Sprawdź czy FB nie wywalił błędu ze zdjęcia
+            if handle_fb_unavailable_error(driver):
+                print(f"INFO: Wykryto błąd niedostępności, próba {attempt + 1}/{max_retries}")
+                # Po odświeżeniu sprawdzamy jeszcze raz czy jesteśmy na głównej
+                if attempt == max_retries - 1:
+                    driver.get("https://www.facebook.com")
+                    random_sleep(5, 7)
 
-        checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
-        checkbox_element = wait.until(EC.element_to_be_clickable((By.XPATH, checkbox_xpath)))
-        
-        # --- ZASTĄPIENIE RUCHU + KLIKNIĘCIA ---
-        human_safe_click(driver, checkbox_element, "'Najnowsze posty' (checkbox)")
-        
-        random_sleep(3, 6)
-        print("SUKCES: Wyszukiwanie i filtrowanie zakończone pomyślnie.")
-        return True
-    except Exception as e:
-        logging.error(f"Błąd podczas wyszukiwania lub filtrowania: {e}", exc_info=True)
-        log_error_state(driver, "search_and_filter")
-        return False
+            search_xpath = "//input[@aria-label='Szukaj na Facebooku' or @placeholder='Szukaj na Facebooku']"
+            
+            # Czekamy krótko na pole wyszukiwania
+            try:
+                search_input = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
+            except TimeoutException:
+                # Jeśli nie ma pola wyszukiwania, być może nadal jest błąd "Strona niedostępna"
+                if handle_fb_unavailable_error(driver):
+                    continue # Spróbuj pętlę od nowa
+                raise # Jeśli to inny błąd, rzuć wyjątek wyżej
+
+            # --- RUCH MYSZY I WPISYWANIE ---
+            human_move_to_element(driver, search_input)
+            search_input.click()
+            
+            # Czyścimy pole (na wypadek gdyby coś tam było)
+            search_input.send_keys(Keys.CONTROL + "a")
+            search_input.send_keys(Keys.BACKSPACE)
+            
+            human_typing(search_input, "korepetycji")
+            random_sleep(1, 2.5)
+            search_input.send_keys(Keys.RETURN)
+            
+            random_sleep(4, 6)
+            
+            # FILTROWANIE: Posty
+            posts_filter_xpath = "//a[@role='link'][.//span[normalize-space(.)='Posty']][not(contains(@href,'/groups/'))]"
+            posts_button = wait.until(EC.element_to_be_clickable((By.XPATH, posts_filter_xpath)))
+            human_safe_click(driver, posts_button, "'Posty' (filtr)")
+            
+            random_sleep(3, 5)
+
+            # FILTROWANIE: Najnowsze posty
+            checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
+            checkbox_element = wait.until(EC.element_to_be_clickable((By.XPATH, checkbox_xpath)))
+            human_safe_click(driver, checkbox_element, "'Najnowsze posty' (checkbox)")
+            
+            random_sleep(3, 6)
+            print("SUKCES: Wyszukiwanie i filtrowanie zakończone pomyślnie.")
+            return True
+
+        except Exception as e:
+            print(f"OSTRZEŻENIE: Próba {attempt + 1} nieudana: {str(e).splitlines()[0]}")
+            if attempt < max_retries - 1:
+                driver.refresh()
+                random_sleep(5, 10)
+            else:
+                logging.error(f"Błąd podczas wyszukiwania po {max_retries} próbach.")
+                return False
 
 def try_hide_all_from_user(driver, post_container_element, author_name):
     wait = WebDriverWait(driver, 10)
