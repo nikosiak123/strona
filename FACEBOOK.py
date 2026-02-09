@@ -12,7 +12,7 @@ import random
 from datetime import datetime
 
 # --- IMPORTY DLA BAZY DANYCH, VERTEX AI I STEALTH ---
-# Zamieniono Airtable na SQLite
+# Zamieniono Airtable na 
 try:
     from database_stats import update_stats
     DATABASE_AVAILABLE = True
@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 
 # --- KONFIGURACJA ŚCIEŻEK I AIRTABLE ---
 # Ścieżka do przeglądarki (u Ciebie to Chromium)
-PATH_DO_GOOGLE_CHROME = '/usr/bin/chromium' 
+PATH_DO_GOOGLE_CHROME = '/usr/bin/google-chrome' 
 
 # Ścieżka do sterownika
 PATH_DO_RECZNEGO_CHROMEDRIVER = '/usr/local/bin/chromedriver'
@@ -555,7 +555,7 @@ def initialize_driver_and_login():
         service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
         options = webdriver.ChromeOptions()
         options.binary_location = PATH_DO_GOOGLE_CHROME
-        #options.add_argument("--headless=new") 
+        options.add_argument("--headless=new") 
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
         options.add_argument(f"window-size={random.choice(WINDOW_SIZES)}")
         options.add_argument("--disable-notifications")
