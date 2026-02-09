@@ -1104,35 +1104,78 @@ def process_posts(driver, model):
 
 # --- Główny Blok Wykonawczy ---
 if __name__ == "__main__":
+    print("DEBUG: Start skryptu - sekcja main")
     import warnings
     warnings.filterwarnings("ignore", category=UserWarning)
+    
     ai_model = None
     try:
         with open('config.json', 'r', encoding='utf-8') as f: config = json.load(f)
         AI_CONFIG = config.get("AI_CONFIG", {})
         PROJECT_ID, LOCATION, MODEL_ID = AI_CONFIG.get("PROJECT_ID"), AI_CONFIG.get("LOCATION"), AI_CONFIG.get("MODEL_ID")
+        
         if not all([PROJECT_ID, LOCATION, MODEL_ID]):
             logging.critical("Brak pełnej konfiguracji AI w pliku config.json"); sys.exit(1)
+            
         vertexai.init(project=PROJECT_ID, location=LOCATION)
         ai_model = GenerativeModel(MODEL_ID)
+        print("DEBUG: Vertex AI gotowe.")
+        
     except Exception as e:
         logging.critical(f"Nie udało się zainicjalizować modelu AI: {e}", exc_info=True); sys.exit(1)
     
     driver = None
-    try:
-        driver = initialize_driver_and_login()
-        if driver and ai_model:
-            if search_and_filter(driver):
-                process_posts(driver, ai_model)
+    retry_search_count = 0  # Licznik prób wyszukiwania
+
+    while True: # Główna pętla utrzymująca skrypt przy życiu
+        try:
+            if not driver:
+                print("DEBUG: Inicjalizacja nowej sesji przeglądarki...")
+                driver = initialize_driver_and_login()
+
+            if driver and ai_model:
+                print("DEBUG: Próba uruchomienia wyszukiwania i filtrów...")
+                
+                if search_and_filter(driver):
+                    print("SUKCES: Filtry ustawione. Rozpoczynam proces procesowania postów.")
+                    retry_search_count = 0 # Reset licznika po sukcesie
+                    process_posts(driver, ai_model)
+                else:
+                    # --- OBSŁUGA BŁĘDU search_and_filter ---
+                    retry_search_count += 1
+                    print(f"OSTRZEŻENIE: search_and_filter nie powiodło się (próba {retry_search_count}/3).")
+                    
+                    if retry_search_count >= 3:
+                        print("⚠️ ALARM: Wielokrotny błąd wyszukiwania. Wykonuję TWARDY RESET...")
+                        if driver: driver.quit()
+                        driver = None # To wymusi nową inicjalizację w następnym obiegu while
+                        random_sleep(10, 20)
+                    else:
+                        print("INFO: Próbuję odświeżyć stronę i ponowić wyszukiwanie...")
+                        driver.refresh()
+                        random_sleep(5, 10)
             else:
-                logging.critical("Nie udało się wyszukać i przefiltrować. Zamykanie...")
-        else:
-            logging.critical("Sterownik przeglądarki lub model AI nie został poprawnie zainicjowany.")
-    except KeyboardInterrupt:
-        print("\nINFO: Przerwano działanie skryptu przez użytkownika (Ctrl-C).")
-    except Exception as e:
-        logging.critical(f"Krytyczny błąd ogólny: {e}", exc_info=True)
-        if driver: log_error_state(driver, "main_fatal_error")
-    finally:
-        if driver: print("INFO: Zamykanie przeglądarki..."); driver.quit()
-        print("INFO: Program zakończył działanie.")
+                print("BŁĄD: Sterownik nie zainicjowany. Ponawiam za 30s...")
+                random_sleep(30, 31)
+
+        except KeyboardInterrupt:
+            print("\nINFO: Przerwano działanie skryptu (Ctrl-C).")
+            break
+        except Exception as e:
+            # --- OBSŁUGA BŁĘDÓW KRYTYCZNYCH ---
+            logging.critical(f"KRYTYCZNY BŁĄD OGÓLNY: {e}", exc_info=True)
+            log_error_state(driver, "main_loop_fatal")
+            
+            # W razie fatalnego błędu, zamknij przeglądarkę i zacznij od nowa
+            if driver:
+                try: driver.quit()
+                except: pass
+            driver = None
+            print("INFO: Restartuję sesję za 20 sekund...")
+            random_sleep(20, 21)
+
+    # Sprzątanie końcowe
+    if driver:
+        print("INFO: Zamykanie przeglądarki...")
+        driver.quit()
+    print("INFO: Program zakończył działanie.")
