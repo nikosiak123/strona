@@ -983,6 +983,12 @@ def process_posts(driver, model):
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 3
     
+    # --- NOWE: Zapisz stan początkowy, żeby wykres nie był pusty ---
+    print("INFO: Inicjalizacja statystyk godzinowych...")
+    timestamp_str = datetime.now().replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
+    save_hourly_stats(timestamp_str, 0, 0)
+    # ---------------------------------------------------------------
+
     loop_count = 0
     while True:
         loop_count += 1
