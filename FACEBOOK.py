@@ -1247,17 +1247,29 @@ if __name__ == "__main__":
             print("\nINFO: Przerwano działanie skryptu (Ctrl-C).")
             break
         except Exception as e:
-            # --- OBSŁUGA BŁĘDÓW KRYTYCZNYCH ---
-            logging.critical(f"KRYTYCZNY BŁĄD OGÓLNY: {e}", exc_info=True)
-            log_error_state(driver, "main_loop_fatal")
-            
-            # W razie fatalnego błędu, zamknij przeglądarkę i zacznij od nowa
-            if driver:
-                try: driver.quit()
-                except: pass
-            driver = None
-            print("INFO: Restartuję sesję za 20 sekund...")
-            random_sleep(20, 21)
+                    # --- OBSŁUGA BŁĘDÓW KRYTYCZNYCH ---
+                    error_message = str(e)
+                    logging.critical(f"KRYTYCZNY BŁĄD OGÓLNY: {error_message}", exc_info=True)
+                    
+                    # Sprawdź, czy to błąd awarii karty (częsty przy braku RAM)
+                    if "tab crashed" in error_message:
+                        print("⚠️ WYKRYTO KRYTYCZNY BŁĄD: Awaria karty przeglądarki (prawdopodobnie brak RAM).")
+                        log_error_state(driver, "tab_crashed")
+                    else:
+                        log_error_state(driver, "main_loop_fatal")
+                    
+                    # Niezależnie od błędu, wykonaj TWARDY RESET
+                    print("INFO: Rozpoczynam procedurę twardego resetu...")
+                    if driver:
+                        try:
+                            driver.quit()
+                        except Exception as quit_exc:
+                            print(f"INFO: Wystąpił błąd podczas zamykania przeglądarki: {quit_exc}")
+                    
+                    driver = None # To wymusi ponowną inicjalizację
+                    
+                    print("INFO: Twardy reset zakończony. Restartuję sesję za 30 sekund...")
+                    random_sleep(30, 31)
 
     # Sprzątanie końcowe
     if driver:
