@@ -5,3 +5,4 @@ requests
 facebook-sdk
 flask
 flask-cors
+Pillow
