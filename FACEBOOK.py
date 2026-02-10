@@ -38,8 +38,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains # NOWY IMPORT
-from PIL import Image # NOWY IMPORT DLA OBRAZÓW
-from database_hourly_stats import save_hourly_stats # NOWY IMPORT DLA STATYSTYK
 
 # --- KONFIGURACJA LOGOWANIA ---
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -603,8 +601,13 @@ def initialize_driver_and_login():
     driver = None
     try:
         # --- Krok 1: Inicjalizacja sterownika ---
-        service = ChromeService(executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER)
+        service = ChromeService(
+            executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER,
+            service_args=["--verbose", "--log-path=/home/korepetotor2/strona/chromedriver.log"]
+        )
         options = webdriver.ChromeOptions()
+        options.add_argument("--enable-logging")
+        options.add_argument("--v=1")
         options.binary_location = PATH_DO_GOOGLE_CHROME
         options.add_argument("--headless=new") 
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
@@ -954,6 +957,7 @@ def comment_and_check_status(driver, main_post_container, comment_list):
 # ... (Funkcja process_posts i blok __main__ pozostają bez zmian) ...
 
 def process_posts(driver, model):
+    from database_hourly_stats import save_hourly_stats # <--- DODAJ TUTAJ (wewnątrz funkcji)
     print("\n--- ROZPOCZYNANIE PRZETWARZANIA POSTÓW ---")
     processed_keys = load_processed_post_keys()
     
