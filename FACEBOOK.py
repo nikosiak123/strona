@@ -89,23 +89,19 @@ SAFETY_SETTINGS = [
 
 # --- NOWE FUNKCJE POMOCNICZE ---
 def take_status_screenshot(driver):
-    """Robi zrzut ekranu, kompresuje go i zapisuje."""
+    """Robi zrzut ekranu i zapisuje go w formacie PNG."""
     try:
         if not os.path.exists(STATUS_SCREENSHOTS_DIR):
             os.makedirs(STATUS_SCREENSHOTS_DIR)
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"STATUS_{timestamp}.jpg" # Zapisujemy jako JPG
+        filename = f"STATUS_{timestamp}.png" # <--- ZMIANA: Zapisujemy jako PNG
         filepath = os.path.join(STATUS_SCREENSHOTS_DIR, filename)
         
-        # Zapisz zrzut ekranu w pełnej jakości
+        # Zapisz zrzut ekranu bezpośrednio jako PNG
         driver.save_screenshot(filepath)
-        
-        # Otwórz obraz za pomocą Pillow i skompresuj
-        with Image.open(filepath) as img:
-            img.save(filepath, "jpeg", quality=50) # Ustaw jakość na 50%
             
-        print(f"📸 SCREENSHOT: Zapisano skompresowany zrzut ekranu: {filename}")
+        print(f"📸 SCREENSHOT: Zapisano zrzut ekranu: {filename}")
 
     except Exception as e:
         print(f"BŁĄD SCREENSHOTU: Nie udało się zrobić zrzutu ekranu: {e}")
