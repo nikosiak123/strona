@@ -53,3 +53,18 @@ def save_hourly_stats(timestamp_str, commented_count, loaded_count):
 # Inicjalizacja przy pierwszym imporcie
 if not os.path.exists(DB_PATH):
     init_hourly_stats_database()
+
+def get_hourly_stats(limit=48):
+    """Pobiera statystyki godzinowe, domyślnie z ostatnich 48 godzin."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        # Pobieramy najnowsze rekordy, aby mieć pewność, że mamy najświeższe dane
+        cursor.execute("SELECT * FROM HourlyStats ORDER BY timestamp DESC LIMIT ?", [limit])
+        records = cursor.fetchall()
+        conn.close()
+        # Zwracamy jako listę słowników
+        return [dict(record) for record in records]
+    except Exception as e:
+        print(f"BŁĄD: [DB] Nie udało się pobrać statystyk godzinowych: {e}")
+        return []

@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(__file__))
 
 # Import modułu statystyk
 from database_stats import get_stats
+from database_hourly_stats import get_hourly_stats
 
 app = Flask(__name__)
 CORS(app)
@@ -45,6 +46,17 @@ def get_facebook_stats():
             "isRunning": is_running,
             "lastCommentTime": last_comment_time.strftime('%Y-%m-%d %H:%M:%S') if last_comment_time else "Brak"
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/facebook-hourly-stats', methods=['GET'])
+def get_facebook_hourly_stats():
+    """Zwraca godzinowe statystyki z ostatnich 48 godzin w porządku chronologicznym."""
+    try:
+        # Pobieramy dane (są posortowane od najnowszych do najstarszych)
+        stats_data = get_hourly_stats(limit=48)
+        # Odwracamy listę, aby na wykresie były w porządku chronologicznym (od najstarszych do najnowszych)
+        return jsonify({"stats": stats_data[::-1]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
