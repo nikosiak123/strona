@@ -16,6 +16,9 @@ sys.path.append(os.path.dirname(__file__))
 from database_stats import get_stats
 from database_hourly_stats import get_hourly_stats
 
+# Dodaj tę stałą na początku, obok innych ścieżek (jeśli nie ma)
+STATUS_SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), 'status_screenshots')
+
 app = Flask(__name__)
 CORS(app)
 
@@ -57,6 +60,52 @@ def get_facebook_hourly_stats():
         stats_data = get_hourly_stats(limit=48)
         # Odwracamy listę, aby na wykresie były w porządku chronologicznym (od najstarszych do najnowszych)
         return jsonify({"stats": stats_data[::-1]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/facebook-status-screenshots', methods=['GET'])
+def get_status_screenshots():
+    """Zwraca listę screenshotów statusu."""
+    try:
+        if not os.path.exists(STATUS_SCREENSHOTS_DIR):
+            return jsonify({"screenshots": []})
+
+        screenshots = []
+        for filename in os.listdir(STATUS_SCREENSHOTS_DIR):
+            if filename.endswith('.png'):
+                # Format nazwy: STATUS_YYYYMMDD_HHMMSS.png
+                try:
+                    # Pobieramy datę modyfikacji pliku dla sortowania
+                    filepath = os.path.join(STATUS_SCREENSHOTS_DIR, filename)
+                    timestamp = os.path.getmtime(filepath)
+                    dt_object = datetime.fromtimestamp(timestamp)
+                    
+                    screenshots.append({
+                        'filename': filename,
+                        'timestamp': dt_object.strftime('%Y-%m-%d %H:%M:%S'),
+                        'raw_timestamp': timestamp
+                    })
+                except Exception:
+                    continue
+
+        # Sortuj od najnowszych
+        sorted_screenshots = sorted(screenshots, key=lambda x: x['raw_timestamp'], reverse=True)
+        return jsonify({"screenshots": sorted_screenshots})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/download-status-screenshot', methods=['GET'])
+def download_status_screenshot():
+    """Pobiera plik screenshota statusu."""
+    try:
+        filename = request.args.get('file')
+        if not filename:
+            return jsonify({"error": "Brak parametru file"}), 400
+
+        if not os.path.exists(os.path.join(STATUS_SCREENSHOTS_DIR, filename)):
+            return jsonify({"error": "Plik nie istnieje"}), 404
+
+        return send_from_directory(STATUS_SCREENSHOTS_DIR, filename, as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
