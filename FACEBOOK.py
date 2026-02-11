@@ -768,6 +768,36 @@ def search_and_filter(driver):
             else:
                 return False
 
+def ensure_latest_filter_active(driver):
+    """
+    Sprawdza, czy filtr 'Najnowsze posty' jest włączony.
+    Jeśli nie - klika go.
+    """
+    print("INFO: Weryfikacja stanu filtra 'Najnowsze posty'...")
+    wait = WebDriverWait(driver, 5) # Krótki czas, bo element powinien już być
+    
+    try:
+        # Szukamy przełącznika (checkboxa)
+        checkbox_xpath = "//input[@aria-label='Najnowsze posty'][@type='checkbox']"
+        checkbox_element = wait.until(EC.presence_of_element_located((By.XPATH, checkbox_xpath)))
+        
+        # Sprawdzamy czy jest zaznaczony
+        is_checked = checkbox_element.is_selected()
+        
+        if not is_checked:
+            print("INFO: Wykryto, że filtr 'Najnowsze' się wyłączył. Klikam ponownie...")
+            # Używamy bezpiecznego kliknięcia z Twojego skryptu
+            human_safe_click(driver, checkbox_element, "Naprawa filtra 'Najnowsze'")
+            # Czekamy chwilę na przeładowanie feedu
+            random_sleep(3, 5)
+        else:
+            print("DEBUG: Filtr 'Najnowsze' jest aktywny. Kontynuuję.")
+            
+    except (TimeoutException, NoSuchElementException):
+        print("OSTRZEŻENIE: Nie znaleziono przełącznika 'Najnowsze'. Być może jesteśmy w złym widoku.")
+    except Exception as e:
+        print(f"OSTRZEŻENIE: Błąd podczas weryfikacji filtra: {e}")
+
 def try_hide_all_from_user(driver, post_container_element, author_name):
     wait = WebDriverWait(driver, 10)
     print(f"  INFO: Rozpoczynanie sekwencji UKRYWANIA WSZYSTKIEGO od '{author_name}'...")
@@ -1027,6 +1057,10 @@ def process_posts(driver, model):
                 driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
                 random_sleep(8, 12)
                 
+                # --- DODAJ TO: ---
+                ensure_latest_filter_active(driver)
+                # -----------------
+
                 if handle_fb_unavailable_error(driver):
                     print("INFO: Strona błędu po powrocie została naprawiona.")
                 
@@ -1127,6 +1161,11 @@ def process_posts(driver, model):
                                 action_timestamps.append(time.time())
                                 update_database_stats(comment_status)
                                 driver.refresh(); random_sleep(4, 7)
+                                
+                                # --- DODAJ TO: ---
+                                ensure_latest_filter_active(driver)
+                                # -----------------
+                                
                                 page_refreshed_in_loop = True
                         elif level not in ['PODSTAWOWA_1_4', 'STUDIA']:
                             print(f"INFO: Pomijanie 'SZUKAM'. Przedmiot(y): {subject} nie pasują.")
@@ -1173,6 +1212,11 @@ def process_posts(driver, model):
             if no_new_posts_in_a_row >= max_stale_scrolls:
                 print(f"INFO: Brak nowych postów od {max_stale_scrolls} scrollowań. Odświeżam stronę...")
                 driver.refresh(); random_sleep(10, 20)
+                
+                # --- DODAJ TO: ---
+                ensure_latest_filter_active(driver)
+                # -----------------
+                
                 no_new_posts_in_a_row = 0
             else:
                 print("INFO: Scrolluję w dół...")
