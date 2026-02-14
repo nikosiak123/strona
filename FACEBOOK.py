@@ -1211,12 +1211,18 @@ def process_posts(driver, model):
 
             if no_new_posts_in_a_row >= max_stale_scrolls:
                 print(f"INFO: Brak nowych postów od {max_stale_scrolls} scrollowań. Odświeżam stronę...")
-                driver.refresh(); random_sleep(10, 20)
+                driver.refresh()
                 
-                # --- DODAJ TO: ---
+                # 1. Najpierw naprawiamy filtry (jeśli dodałeś tę funkcję w poprzednim kroku)
                 ensure_latest_filter_active(driver)
-                # -----------------
                 
+                # 2. Teraz robimy DŁUGĄ przerwę (5 minut = 300 sekund)
+                print("INFO: 🛑 ZARZĄDZONO PRZERWĘ BEZPIECZEŃSTWA: Czekam 5 minut przed wznowieniem pracy...")
+                
+                # Czekamy od 300 do 330 sekund (5 minut do 5 minut i 30 sekund)
+                random_sleep(300, 330)
+                
+                print("INFO: Wznawiam pracę po przerwie.")
                 no_new_posts_in_a_row = 0
             else:
                 print("INFO: Scrolluję w dół...")
