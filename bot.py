@@ -34,7 +34,7 @@ user_message_buffers = {}
 DEBOUNCE_SECONDS = 5  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
 
 # --- Wczytywanie konfiguracji z pliku ---
-config_path = '/home/korepetotor2/strona/config.json'
+config_path = '/home/korepetotor3/strona/config.json'
 try:
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
