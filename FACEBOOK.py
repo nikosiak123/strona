@@ -603,7 +603,7 @@ def initialize_driver_and_login():
         # --- Krok 1: Inicjalizacja sterownika ---
         service = ChromeService(
             executable_path=PATH_DO_RECZNEGO_CHROMEDRIVER,
-            service_args=["--verbose", "--log-path=/home/korepetotor2/strona/chromedriver.log"]
+            service_args=["--verbose", "--log-path=/home/korepetotor3/strona/chromedriver.log"]
         )
         options = webdriver.ChromeOptions()
         options.add_argument("--enable-logging")
