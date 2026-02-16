@@ -104,15 +104,14 @@ try:
         print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini")
     else:
         print("--- Inicjalizowanie Google Gen AI...")
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=GEMINI_API_KEY)
+        gemini_client = genai.Client()
         print(f"--- Klient AI zainicjalizowany.")
         
         # TEST: sprawdź czy działa
-        test_response = gemini_client.models.generate_content(
-            model='gemini-1.5-flash-latest',
-            contents='Hello'
-        )
-        print(f"--- Test połączenia OK: {test_response.text[:30]}...")
+        model = genai.GenerativeModel(model_name=MODEL_ID)
+        test_response = model.generate_content('Hello')
+        print(f"--- Test połączenia OK: {test_response.text[:30]}")
         
 except Exception as e:
     print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {e}", flush=True)
