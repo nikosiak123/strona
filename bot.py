@@ -6,8 +6,8 @@ import os
 import json
 import requests
 import time
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google import genai
+from google.genai import types
 import errno
 from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
 from database import DatabaseTable
@@ -68,34 +68,55 @@ EXPECTING_REPLY = "EXPECTING_REPLY"
 CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
 
-GENERATION_CONFIG = GenerationConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
-SAFETY_SETTINGS = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-}
+GENERATION_CONFIG = types.GenerateContentConfig(
+    temperature=0.7,
+    top_p=0.95,
+    top_k=40,
+    max_output_tokens=1024,
+)
+SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    ),
+]
 
 # =====================================================================
-# === INICJALIZACJA AI ================================================
+# === INICJALIZACJA GOOGLE GEN AI =====================================
 # =====================================================================
-gemini_model = None
+gemini_client = None
 try:
-    # Pobierz klucz z config.json lub zmiennych środowiskowych
-    GEMINI_API_KEY = config.get("AI_CONFIG", {}).get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+    GEMINI_API_KEY = config.get("AI_CONFIG", {}).get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
     
     if not GEMINI_API_KEY:
-        print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini w config.json")
+        print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini")
     else:
-        print("--- Inicjalizowanie Google AI Studio...")
-        genai.configure(api_key=GEMINI_API_KEY)
+        print("--- Inicjalizowanie Google Gen AI...")
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print(f"--- Klient AI zainicjalizowany.")
         
-        # Użyj tego samego MODEL_ID co wcześniej, ale bez prefixu
-        model_name = "gemini-1.5-flash"  # lub inny model
-        gemini_model = genai.GenerativeModel(model_name)
-        print(f"--- Model {model_name} załadowany OK.")
+        # TEST: sprawdź czy działa
+        test_response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
+            contents='Hello'
+        )
+        print(f"--- Test połączenia OK: {test_response.text[:30]}...")
+        
 except Exception as e:
-    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji AI Studio: {e}", flush=True)
+    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {e}", flush=True)
+    gemini_client = None
 
 
 # =====================================================================
@@ -514,7 +535,7 @@ def run_data_extractor_ai(history):
     full_prompt = f"{instruction}\n\nHistoria czatu:\n{chat_history_text}"
     
     try:
-        response = gemini_model.generate_content(full_prompt)
+        response = gemini_client.models.generate_content(model='gemini-1.5-flash-latest', contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
         
         # LOGOWANIE SUROWEJ ODPOWIEDZI AI
@@ -543,7 +564,7 @@ def run_question_creator_ai(history, missing_fields):
     full_prompt = [Content(role="user", parts=[Part.from_text(instruction)])] + history
     
     try:
-        response = gemini_model.generate_content(full_prompt)
+        response = gemini_client.models.generate_content(model='gemini-1.5-flash-latest', contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         return response.text.strip()
     except Exception as e:
         logging.error(f"Błąd kreatora pytań AI: {e}")
@@ -584,18 +605,18 @@ def send_message_with_typing(recipient_id, message_text, page_access_token):
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
 def classify_conversation(history):
-    if not gemini_model: return EXPECTING_REPLY
+    if not gemini_client: return EXPECTING_REPLY
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
-    full_prompt = [
-        Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_CLASSIFIER)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
-        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
-    ]
+    full_prompt = f"{SYSTEM_INSTRUCTION_CLASSIFIER}\n\n{prompt_for_analysis}"
     try:
-        analysis_config = GenerationConfig(temperature=0.0)
-        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        status = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        analysis_config = types.GenerateContentConfig(temperature=0.0)
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
+            contents=full_prompt,
+            generation_config=analysis_config
+        )
+        status = response.text.strip()
         if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]: return status
         return EXPECTING_REPLY
     except Exception as e:
@@ -603,21 +624,21 @@ def classify_conversation(history):
         return EXPECTING_REPLY
 
 def estimate_follow_up_time(history):
-    if not gemini_model: return None
+    if not gemini_client: return None
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
     chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
-    full_prompt = [
-        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
-        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
-        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
-    ]
+    full_prompt = f"{formatted_instruction}\n\n{prompt_for_analysis}"
+
     try:
-        analysis_config = GenerationConfig(temperature=0.2)
-        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
-        if not response.candidates: return None
-        time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        analysis_config = types.GenerateContentConfig(temperature=0.2)
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
+            contents=full_prompt,
+            generation_config=analysis_config
+        )
+        time_str = response.text.strip()
         if "T" in time_str and ":" in time_str: return time_str
         return None
     except Exception as e:
@@ -625,28 +646,48 @@ def estimate_follow_up_time(history):
         return None
 
 def get_gemini_response(history, prompt_details, is_follow_up=False):
-    if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
-    if is_follow_up:
-        system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, spersonalizowanej wiadomości przypominającej. "
-                              "Na podstawie historii rozmowy, nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
-        history_context = history[-4:] 
-        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
-                       Content(role="model", parts=[Part.from_text("Rozumiem. Stworzę wiadomość przypominającą.")])] + history_context
-    else:
-        system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
-            prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
-        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
-                       Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
+    """Generuje odpowiedź używając Google Gen AI."""
+    if not gemini_client:
+        return "Przepraszam, mam chwilowy problem z moim systemem."
+    
     try:
-        response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
-        if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
-        generated_text = "".join(part.text for part in response.candidates[0].content.parts).strip()
+        # Przygotuj prompt systemowy
+        if not is_follow_up:
+            system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
+                prompt_details=prompt_details,
+                agreement_marker=AGREEMENT_MARKER
+            )
+        else:
+            system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, "
+                                 "spersonalizowanej wiadomości przypominającej. Na podstawie historii rozmowy, "
+                                 "nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
+        
+        # Konwertuj historię na tekst
+        history_text = ""
+        for msg in history[-10:]:  # ostatnie 10 wiadomości
+            role = "Asystent" if msg.role == "model" else "Klient"
+            if hasattr(msg, 'parts') and msg.parts:
+                history_text += f"{role}: {msg.parts[0].text}\n"
+        
+        # Połącz wszystko w jeden prompt
+        full_prompt = f"{system_instruction}\n\nHistoria rozmowy:\n{history_text}\n\nAsystent:"
+        
+        # Wywołaj API
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
+            contents=full_prompt,
+            generation_config=GENERATION_CONFIG,
+            safety_settings=SAFETY_SETTINGS
+        )
+        
+        generated_text = response.text.strip()
         if is_follow_up and not generated_text:
             logging.warning("AI (przypomnienie) zwróciło pusty tekst. Używam domyślnej wiadomości.")
             return "Dzień dobry, chciałem tylko zapytać, czy udało się Państwu podjąć decyzję w sprawie lekcji?"
         return generated_text
+        
     except Exception as e:
-        logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
+        logging.error(f"BŁĄD wywołania Gen AI: {e}", exc_info=True)
         return "Przepraszam, wystąpił nieoczekiwany błąd."
 
 # =====================================================================
