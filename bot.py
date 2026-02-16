@@ -115,7 +115,7 @@ try:
         print(f"--- Test połączenia OK: {test_response.text[:30]}...")
         
 except Exception as e:
-    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {e}", flush=True)
+    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {repr(e)}", flush=True)
     gemini_client = None
 
 
