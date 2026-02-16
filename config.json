@@ -2,7 +2,7 @@
   "AI_CONFIG": {
     "PROJECT_ID": "project-51579847-5564-4852-a92",
     "LOCATION": "europe-central2",
-    "MODEL_ID": "publishers/google/models/gemini-2.5-flash-lite",
+    "MODEL_ID": "publishers/google/models/gemini-flash-lite-lates",
     "GEMINI_API_KEY": "AIzaSyDUA29AK9R-kgpoLhlpEfBOSoIeOCvP3jA"
   },
   "AIRTABLE_CONFIG": {
