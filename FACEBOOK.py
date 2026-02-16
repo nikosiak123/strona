@@ -23,11 +23,8 @@ except ImportError:
 from database import DatabaseTable
 from config import FB_PASSWORD
 
-import vertexai
-from vertexai.generative_models import (
-    GenerativeModel, Part, Content, GenerationConfig,
-    SafetySetting, HarmCategory, HarmBlockThreshold
-)
+import google.generativeai as genai
+from google.generativeai.types import Part, Content, GenerationConfig, HarmCategory, HarmBlockThreshold
 from selenium_stealth import stealth
 
 from selenium import webdriver
@@ -80,10 +77,12 @@ WINDOW_SIZES = ["1920,1080", "1366,768", "1536,864"]
 
 # --- KONFIGURACJA AI ---
 GENERATION_CONFIG = GenerationConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
-SAFETY_SETTINGS = [
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-]
+SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+}
 
 # --- NOWE FUNKCJE POMOCNICZE ---
 def take_status_screenshot(driver):
@@ -1253,15 +1252,16 @@ if __name__ == "__main__":
     try:
         with open('config.json', 'r', encoding='utf-8') as f: config = json.load(f)
         AI_CONFIG = config.get("AI_CONFIG", {})
-        PROJECT_ID, LOCATION, MODEL_ID = AI_CONFIG.get("PROJECT_ID"), AI_CONFIG.get("LOCATION"), AI_CONFIG.get("MODEL_ID")
-        
-        if not all([PROJECT_ID, LOCATION, MODEL_ID]):
-            logging.critical("Brak pełnej konfiguracji AI w pliku config.json"); sys.exit(1)
-            
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
-        ai_model = GenerativeModel(MODEL_ID)
-        print("DEBUG: Vertex AI gotowe.")
-        
+        GEMINI_API_KEY = AI_CONFIG.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+
+        if not GEMINI_API_KEY:
+            logging.critical("Brak klucza API Gemini w config.json"); sys.exit(1)
+
+        genai.configure(api_key=GEMINI_API_KEY)
+        model_name = "gemini-1.5-flash"
+        ai_model = genai.GenerativeModel(model_name)
+        print(f"--- Model {model_name} załadowany OK.")
+
     except Exception as e:
         logging.critical(f"Nie udało się zainicjalizować modelu AI: {e}", exc_info=True); sys.exit(1)
     

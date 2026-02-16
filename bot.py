@@ -6,11 +6,8 @@ import os
 import json
 import requests
 import time
-import vertexai
-from vertexai.generative_models import (
-    GenerativeModel, Part, Content, GenerationConfig,
-    SafetySetting, HarmCategory, HarmBlockThreshold
-)
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import errno
 from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
 from database import DatabaseTable
@@ -72,27 +69,33 @@ CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
 
 GENERATION_CONFIG = GenerationConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
-SAFETY_SETTINGS = [
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH),
-    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-]
+SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+}
 
 # =====================================================================
 # === INICJALIZACJA AI ================================================
 # =====================================================================
 gemini_model = None
 try:
-    if not all([PROJECT_ID, LOCATION, MODEL_ID]):
-        print("!!! KRYTYCZNY BŁĄD: Brak pełnej konfiguracji AI w pliku config.json")
+    # Pobierz klucz z config.json lub zmiennych środowiskowych
+    GEMINI_API_KEY = config.get("AI_CONFIG", {}).get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+    
+    if not GEMINI_API_KEY:
+        print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini w config.json")
     else:
-        print(f"--- Inicjalizowanie Vertex AI: Projekt={PROJECT_ID}, Lokalizacja={LOCATION}")
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
-        print("--- Inicjalizacja Vertex AI OK.")
-        print(f"--- Ładowanie modelu: {MODEL_ID}")
-        gemini_model = GenerativeModel(MODEL_ID)
-        print(f"--- Model {MODEL_ID} załadowany OK.")
+        print("--- Inicjalizowanie Google AI Studio...")
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        # Użyj tego samego MODEL_ID co wcześniej, ale bez prefixu
+        model_name = "gemini-1.5-flash"  # lub inny model
+        gemini_model = genai.GenerativeModel(model_name)
+        print(f"--- Model {model_name} załadowany OK.")
 except Exception as e:
-    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
+    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji AI Studio: {e}", flush=True)
 
 
 # =====================================================================
@@ -325,7 +328,7 @@ def load_history(user_psid):
         for msg_data in history_data:
             if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
                 parts = [Part.from_text(p['text']) for p in msg_data['parts']]
-                msg = Content(role=msg_data['role'], parts=parts)
+                msg = genai.types.Content(role=msg_data['role'], parts=parts)
                 msg.read = msg_data.get('read', False)
                 msg.timestamp = msg_data.get('timestamp')
                 history.append(msg)

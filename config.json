@@ -2,7 +2,8 @@
   "AI_CONFIG": {
     "PROJECT_ID": "hopeful-runner-480022-f9",
     "LOCATION": "europe-central2",
-    "MODEL_ID": "publishers/google/models/gemini-2.5-flash-lite"
+    "MODEL_ID": "publishers/google/models/gemini-2.5-flash-lite",
+    "GEMINI_API_KEY": "AIza...twój_klucz_tutaj"
   },
   "AIRTABLE_CONFIG": {
     "API_KEY": "patcSdupvwJebjFDo.7e15a93930d15261989844687bcb15ac5c08c84a29920c7646760bc6f416146d",
