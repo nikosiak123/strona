@@ -6,8 +6,8 @@ import os
 import json
 import requests
 import time
-from google import genai
-from google.genai import types
+import google.generativeai as genai
+from google.generativeai import types
 import errno
 from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
 from database import DatabaseTable
@@ -68,35 +68,35 @@ EXPECTING_REPLY = "EXPECTING_REPLY"
 CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
 
-GENERATION_CONFIG = {
-    "temperature": 0.7,
-    "top_p": 0.95,
-    "top_k": 40,
-    "max_output_tokens": 1024,
-}
+GENERATION_CONFIG = types.GenerateContentConfig(
+    temperature=0.7,
+    top_p=0.95,
+    top_k=40,
+    max_output_tokens=1024,
+)
 SAFETY_SETTINGS = [
-    {
-        "category": "HARM_CATEGORY_HARASSMENT",
-        "threshold": "BLOCK_ONLY_HIGH"
-    },
-    {
-        "category": "HARM_CATEGORY_HATE_SPEECH",
-        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-    },
-    {
-        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-    },
-    {
-        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-    },
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
+    ),
 ]
 
 # =====================================================================
 # === INICJALIZACJA GOOGLE GEN AI =====================================
 # =====================================================================
-gemini_model = None
+gemini_client = None
 try:
     GEMINI_API_KEY = config.get("AI_CONFIG", {}).get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
     
@@ -104,17 +104,19 @@ try:
         print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini")
     else:
         print("--- Inicjalizowanie Google Gen AI...")
-        genai.configure(api_key=GEMINI_API_KEY)
-        gemini_model = genai.GenerativeModel(MODEL_ID)
-        print(f"--- Model AI '{MODEL_ID}' zainicjalizowany.")
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print(f"--- Klient AI zainicjalizowany.")
         
         # TEST: sprawdź czy działa
-        test_response = gemini_model.generate_content('Hello')
+        test_response = gemini_client.models.generate_content(
+            model=MODEL_ID,
+            contents='Hello'
+        )
         print(f"--- Test połączenia OK: {test_response.text[:30]}...")
         
 except Exception as e:
     print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {e}", flush=True)
-    gemini_model = None
+    gemini_client = None
 
 
 # =====================================================================
@@ -540,7 +542,7 @@ def run_data_extractor_ai(history):
     full_prompt = f"{instruction}\n\nHistoria czatu:\n{chat_history_text}"
     
     try:
-        response = gemini_model.generate_content(contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        response = gemini_client.models.generate_content(model='gemini-1.5-flash-latest', contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
         
         # LOGOWANIE SUROWEJ ODPOWIEDZI AI
@@ -570,7 +572,7 @@ def run_question_creator_ai(history, missing_fields):
     full_prompt = [types.Content(role="user", parts=[types.Part(text=instruction)])] + content_history
     
     try:
-        response = gemini_model.generate_content(contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        response = gemini_client.models.generate_content(model='gemini-1.5-flash-latest', contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
         return response.text.strip()
     except Exception as e:
         logging.error(f"Błąd kreatora pytań AI: {e}")
@@ -611,13 +613,14 @@ def send_message_with_typing(recipient_id, message_text, page_access_token):
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
 def classify_conversation(history):
-    if not gemini_model: return EXPECTING_REPLY
+    if not gemini_client: return EXPECTING_REPLY
     chat_history_text = "\n".join([f"Klient: {item['content'].parts[0].text}" if item['content'].role == 'user' else f"Bot: {item['content'].parts[0].text}" for item in history[-4:]])
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
     full_prompt = f"{SYSTEM_INSTRUCTION_CLASSIFIER}\n\n{prompt_for_analysis}"
     try:
-        analysis_config = {"temperature": 0.0}
-        response = gemini_model.generate_content(
+        analysis_config = types.GenerateContentConfig(temperature=0.0)
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
             contents=full_prompt,
             generation_config=analysis_config
         )
@@ -629,7 +632,7 @@ def classify_conversation(history):
         return EXPECTING_REPLY
 
 def estimate_follow_up_time(history):
-    if not gemini_model: return None
+    if not gemini_client: return None
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
     chat_history_text = "\n".join([f"Klient: {item['content'].parts[0].text}" if item['content'].role == 'user' else f"Bot: {item['content'].parts[0].text}" for item in history])
@@ -637,8 +640,9 @@ def estimate_follow_up_time(history):
     full_prompt = f"{formatted_instruction}\n\n{prompt_for_analysis}"
 
     try:
-        analysis_config = {"temperature": 0.2}
-        response = gemini_model.generate_content(
+        analysis_config = types.GenerateContentConfig(temperature=0.2)
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
             contents=full_prompt,
             generation_config=analysis_config
         )
@@ -651,7 +655,7 @@ def estimate_follow_up_time(history):
 
 def get_gemini_response(history, prompt_details, is_follow_up=False):
     """Generuje odpowiedź używając Google Gen AI."""
-    if not gemini_model:
+    if not gemini_client:
         return "Przepraszam, mam chwilowy problem z moim systemem."
     
     try:
@@ -678,7 +682,8 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
         full_prompt = f"{system_instruction}\n\nHistoria rozmowy:\n{history_text}\n\nAsystent:"
         
         # Wywołaj API
-        response = gemini_model.generate_content(
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash-latest',
             contents=full_prompt,
             generation_config=GENERATION_CONFIG,
             safety_settings=SAFETY_SETTINGS
