@@ -68,7 +68,7 @@ EXPECTING_REPLY = "EXPECTING_REPLY"
 CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
 
-GENERATION_CONFIG = types.GenerateContentConfig(
+GENERATION_CONFIG = types.GenerationConfig(
     temperature=0.7,
     top_p=0.95,
     top_k=40,
@@ -618,7 +618,7 @@ def classify_conversation(history):
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
     full_prompt = f"{SYSTEM_INSTRUCTION_CLASSIFIER}\n\n{prompt_for_analysis}"
     try:
-        analysis_config = types.GenerateContentConfig(temperature=0.0)
+        analysis_config = types.GenerationConfig(temperature=0.0)
         response = gemini_client.models.generate_content(
             model='gemini-1.5-flash-latest',
             contents=full_prompt,
@@ -640,7 +640,7 @@ def estimate_follow_up_time(history):
     full_prompt = f"{formatted_instruction}\n\n{prompt_for_analysis}"
 
     try:
-        analysis_config = types.GenerateContentConfig(temperature=0.2)
+        analysis_config = types.GenerationConfig(temperature=0.2)
         response = gemini_client.models.generate_content(
             model='gemini-1.5-flash-latest',
             contents=full_prompt,
