@@ -1,6 +1,6 @@
 selenium
 selenium-stealth
-google-generativeai
+google-genai
 requests
 facebook-sdk
 flask
