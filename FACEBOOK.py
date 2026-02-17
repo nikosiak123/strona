@@ -23,8 +23,11 @@ except ImportError:
 from database import DatabaseTable
 from config import FB_PASSWORD
 
-from google import genai
-from google.genai import types
+import vertexai
+from vertexai.generative_models import (
+    GenerativeModel, Part, Content, GenerationConfig,
+    SafetySetting, HarmCategory, HarmBlockThreshold
+)
 from selenium_stealth import stealth
 
 from selenium import webdriver
@@ -76,29 +79,10 @@ USER_AGENTS = [
 WINDOW_SIZES = ["1920,1080", "1366,768", "1536,864"]
 
 # --- KONFIGURACJA AI ---
-GENERATION_CONFIG = types.GenerateContentConfig(
-    temperature=0.7,
-    top_p=0.95,
-    top_k=40,
-    max_output_tokens=1024,
-)
+GENERATION_CONFIG = GenerationConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
 SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE
-    ),
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH),
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
 ]
 
 # --- NOWE FUNKCJE POMOCNICZE ---
@@ -468,14 +452,16 @@ Odpowiedz TYLKO w formacie JSON:
 }}
 Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
 """
-    full_prompt = f"{system_instruction}\n\nTekst posta:\n---\n{post_text}\n---"
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(system_instruction)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Będę analizować tekst, zwracając kategorię, przedmiot(y) i poziom nauczania w formacie JSON.")]),
+        Content(role="user", parts=[Part.from_text(f"Tekst posta:\n---\n{post_text}\n---")])
+    ]
     try:
-        response = model.generate_content(
-            model='gemini-1.5-flash-latest',
-            contents=full_prompt,
-            generation_config=GENERATION_CONFIG,
-            safety_settings=SAFETY_SETTINGS
-        )
+        response = model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        if not response.candidates:
+            logging.error(f"Odpowiedź AI zablokowana. Powód: {response.prompt_feedback}")
+            return {'category': "ERROR", 'subject': None, 'level': None}
         raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
         result = json.loads(raw_text)
         return result
@@ -1263,31 +1249,21 @@ if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore", category=UserWarning)
     
-    gemini_client = None
+    ai_model = None
     try:
         with open('config.json', 'r', encoding='utf-8') as f: config = json.load(f)
         AI_CONFIG = config.get("AI_CONFIG", {})
-        GEMINI_API_KEY = AI_CONFIG.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        PROJECT_ID, LOCATION, MODEL_ID = AI_CONFIG.get("PROJECT_ID"), AI_CONFIG.get("LOCATION"), AI_CONFIG.get("MODEL_ID")
         
-        if not GEMINI_API_KEY:
-            print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini")
-            sys.exit(1)
-        else:
-            print("--- Inicjalizowanie Google Gen AI...")
-            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-            print(f"--- Klient AI zainicjalizowany.")
+        if not all([PROJECT_ID, LOCATION, MODEL_ID]):
+            logging.critical("Brak pełnej konfiguracji AI w pliku config.json"); sys.exit(1)
             
-            # TEST: sprawdź czy działa
-            test_response = gemini_client.models.generate_content(
-                model='gemini-1.5-flash-latest',
-                contents='Hello'
-            )
-            print(f"--- Test połączenia OK: {test_response.text[:30]}...")
-            
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        ai_model = GenerativeModel(MODEL_ID)
+        print("DEBUG: Vertex AI gotowe.")
+        
     except Exception as e:
-        print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {e}", flush=True)
-        gemini_client = None
-        sys.exit(1)
+        logging.critical(f"Nie udało się zainicjalizować modelu AI: {e}", exc_info=True); sys.exit(1)
     
     driver = None
     retry_search_count = 0  # Licznik prób wyszukiwania
@@ -1298,13 +1274,13 @@ if __name__ == "__main__":
                 print("DEBUG: Inicjalizacja nowej sesji przeglądarki...")
                 driver = initialize_driver_and_login()
 
-            if driver and gemini_client:
+            if driver and ai_model:
                 print("DEBUG: Próba uruchomienia wyszukiwania i filtrów...")
                 
                 if search_and_filter(driver):
                     print("SUKCES: Filtry ustawione. Rozpoczynam proces procesowania postów.")
                     retry_search_count = 0 # Reset licznika po sukcesie
-                    process_posts(driver, gemini_client)
+                    process_posts(driver, ai_model)
                 else:
                     # --- OBSŁUGA BŁĘDU search_and_filter ---
                     retry_search_count += 1
