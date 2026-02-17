@@ -348,7 +348,7 @@ def load_history(user_psid):
         history = []
         for msg_data in history_data:
             if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
-                parts = [types.Part.from_text(p['text']) for p in msg_data['parts']]
+                parts = [types.Part(text=p['text']) for p in msg_data['parts']]
                 msg = types.Content(role=msg_data['role'], parts=parts)
                 msg.read = msg_data.get('read', False)
                 msg.timestamp = msg_data.get('timestamp')
@@ -473,7 +473,7 @@ def check_and_send_nudges():
                         logging.info(f"[Scheduler] Wysłano przypomnienie poziom {level} dla PSID {psid}")
                         # Dodaj wiadomość przypominającą do historii konwersacji
                         history = load_history(psid)
-                        reminder_msg = types.Content(role="model", parts=[types.Part.from_text(message_to_send)])
+                        reminder_msg = types.Content(role="model", parts=[types.Part(text=message_to_send)])
                         history.append(reminder_msg)
                         save_history(psid, history)
                         logging.info(f"Dodano wiadomość przypominającą do historii dla PSID {psid}")
@@ -561,7 +561,7 @@ def run_question_creator_ai(history, missing_fields):
     Na podstawie historii rozmowy, sformułuj pytanie, które będzie logicznie pasować do konwersacji.
     """
     
-    full_prompt = [types.Content(role="user", parts=[types.Part.from_text(instruction)])] + history
+    full_prompt = [types.Content(role="user", parts=[types.Part(text=instruction)])] + history
     
     try:
         response = gemini_client.models.generate_content(model='gemini-1.5-flash-latest', contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
@@ -708,7 +708,7 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         history = load_history(sender_id)
         
         # Dodajemy ZBIORCZĄ wiadomość do historii
-        new_msg = types.Content(role="user", parts=[types.Part.from_text(combined_text)])
+        new_msg = types.Content(role="user", parts=[types.Part(text=combined_text)])
         new_msg.read = False
         history.append(new_msg)
 
@@ -728,7 +728,7 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
                 html_content = f"<p>Użytkownik {sender_id} prosi o pomoc.</p><pre>{last_msgs}</pre>"
                 send_email_via_brevo(admin_email, "Prośba o pomoc", html_content)
-                history.append(types.Content(role="model", parts=[types.Part.from_text("MANUAL_MODE")]))
+                history.append(types.Content(role="model", parts=[types.Part(text="MANUAL_MODE")]))
                 save_history(sender_id, history)
                 return
             send_message_with_typing(sender_id, 'Dziękujemy za kontakt. Wpisz "POMOC" jeśli masz pytania.', page_token)
@@ -745,15 +745,15 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 if price:
                     final_offer = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut. Czy umówić lekcję?"
                     send_message_with_typing(sender_id, final_offer, page_token)
-                    history.append(types.Content(role="model", parts=[types.Part.from_text(final_offer)]))
+                    history.append(types.Content(role="model", parts=[types.Part(text=final_offer)]))
                 else:
                     error_msg = "Nie udało się obliczyć ceny. Proszę podać klasę i typ szkoły."
                     send_message_with_typing(sender_id, error_msg, page_token)
-                    history.append(types.Content(role="model", parts=[types.Part.from_text(error_msg)]))
+                    history.append(types.Content(role="model", parts=[types.Part(text=error_msg)]))
             else:
                 missing_info_message = run_question_creator_ai(history, extracted_data["missing"])
                 send_message_with_typing(sender_id, missing_info_message, page_token)
-                history.append(types.Content(role="model", parts=[types.Part.from_text(missing_info_message)]))
+                history.append(types.Content(role="model", parts=[types.Part(text=missing_info_message)]))
 
 # Logika obsługi tagu [ZAPISZ_NA_LEKCJE]
         elif AGREEMENT_MARKER in ai_response_raw:
@@ -772,10 +772,10 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 send_message_with_typing(sender_id, final_message_to_user, page_token)
                 
                 # Zapisujemy wiadomość bota do historii
-                history.append(types.Content(role="model", parts=[types.Part.from_text(final_message_to_user)]))
+                history.append(types.Content(role="model", parts=[types.Part(text=final_message_to_user)]))
                 
                 # --- ZMIANA 2: Dodajemy znacznik zmiany statusu rozmowy ---
-                history.append(types.Content(role="model", parts=[types.Part.from_text("POST_RESERVATION_MODE")]))
+                history.append(types.Content(role="model", parts=[types.Part(text="POST_RESERVATION_MODE")]))
                 logging.info(f"Użytkownik {sender_id} otrzymał link. Przechodzę w tryb POST_RESERVATION_MODE.")
                 # --------------------------------------------------------
                 
@@ -785,7 +785,7 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         else:
             # Zwykła odpowiedź
             send_message_with_typing(sender_id, ai_response_raw, page_token)
-            history.append(types.Content(role="model", parts=[types.Part.from_text(ai_response_raw)]))
+            history.append(types.Content(role="model", parts=[types.Part(text=ai_response_raw)]))
         
         save_history(sender_id, history)
 
