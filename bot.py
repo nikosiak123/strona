@@ -349,25 +349,28 @@ def load_history(user_psid):
         for msg_data in history_data:
             if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
                 parts = [types.Part(text=p['text']) for p in msg_data['parts']]
-                msg = types.Content(role=msg_data['role'], parts=parts)
-                msg.read = msg_data.get('read', False)
-                msg.timestamp = msg_data.get('timestamp')
-                history.append(msg)
+                content = types.Content(role=msg_data['role'], parts=parts)
+                history.append({
+                    "content": content,
+                    "read": msg_data.get("read", False),
+                    "timestamp": msg_data.get("timestamp")
+                })
         return history
     except Exception: return []
 
 def save_history(user_psid, history):
     ensure_dir(HISTORY_DIR)
     filepath = os.path.join(HISTORY_DIR, f"{user_psid}.json")
-    history_to_save = history  # Bez limitu długości historii
     history_data = []
-    for msg in history_to_save:
-        parts_data = [{'text': part.text} for part in msg.parts]
-        msg_dict = {'role': msg.role, 'parts': parts_data}
-        if hasattr(msg, 'read'):
-            msg_dict['read'] = msg.read
-        if hasattr(msg, 'timestamp'):
-            msg_dict['timestamp'] = msg.timestamp
+    for item in history:
+        content = item["content"]
+        parts_data = [{'text': part.text} for part in content.parts]
+        msg_dict = {
+            'role': content.role,
+            'parts': parts_data,
+            'read': item.get('read', False),
+            'timestamp': item.get('timestamp')
+        }
         history_data.append(msg_dict)
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -473,8 +476,12 @@ def check_and_send_nudges():
                         logging.info(f"[Scheduler] Wysłano przypomnienie poziom {level} dla PSID {psid}")
                         # Dodaj wiadomość przypominającą do historii konwersacji
                         history = load_history(psid)
-                        reminder_msg = types.Content(role="model", parts=[types.Part(text=message_to_send)])
-                        history.append(reminder_msg)
+                        new_content = types.Content(role="model", parts=[types.Part(text=message_to_send)])
+                        history.append({
+                            "content": new_content,
+                            "read": True,
+                            "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                        })
                         save_history(psid, history)
                         logging.info(f"Dodano wiadomość przypominającą do historii dla PSID {psid}")
                     if level == 1 and task["status"] == "pending_expect_reply_1":
@@ -531,7 +538,7 @@ def run_data_extractor_ai(history):
     { "status": "missing_data", "missing": ["klasa", "poziom"] }
     """
     
-    chat_history_text = "\n".join([f"{msg.role}: {msg.parts[0].text}" for msg in history])
+    chat_history_text = "\n".join([f"{item['content'].role}: {item['content'].parts[0].text}" for item in history])
     full_prompt = f"{instruction}\n\nHistoria czatu:\n{chat_history_text}"
     
     try:
@@ -561,7 +568,8 @@ def run_question_creator_ai(history, missing_fields):
     Na podstawie historii rozmowy, sformułuj pytanie, które będzie logicznie pasować do konwersacji.
     """
     
-    full_prompt = [types.Content(role="user", parts=[types.Part(text=instruction)])] + history
+    content_history = [item["content"] for item in history]
+    full_prompt = [types.Content(role="user", parts=[types.Part(text=instruction)])] + content_history
     
     try:
         response = gemini_client.models.generate_content(model='gemini-1.5-flash-latest', contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
@@ -606,7 +614,7 @@ def send_message_with_typing(recipient_id, message_text, page_access_token):
 
 def classify_conversation(history):
     if not gemini_client: return EXPECTING_REPLY
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
+    chat_history_text = "\n".join([f"Klient: {item['content'].parts[0].text}" if item['content'].role == 'user' else f"Bot: {item['content'].parts[0].text}" for item in history[-4:]])
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
     full_prompt = f"{SYSTEM_INSTRUCTION_CLASSIFIER}\n\n{prompt_for_analysis}"
     try:
@@ -627,7 +635,7 @@ def estimate_follow_up_time(history):
     if not gemini_client: return None
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
-    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
+    chat_history_text = "\n".join([f"Klient: {item['content'].parts[0].text}" if item['content'].role == 'user' else f"Bot: {item['content'].parts[0].text}" for item in history])
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
     full_prompt = f"{formatted_instruction}\n\n{prompt_for_analysis}"
 
@@ -664,7 +672,8 @@ def get_gemini_response(history, prompt_details, is_follow_up=False):
         
         # Konwertuj historię na tekst
         history_text = ""
-        for msg in history[-10:]:  # ostatnie 10 wiadomości
+        for item in history[-10:]:  # ostatnie 10 wiadomości
+            msg = item["content"]
             role = "Asystent" if msg.role == "model" else "Klient"
             if hasattr(msg, 'parts') and msg.parts:
                 history_text += f"{role}: {msg.parts[0].text}\n"
@@ -708,13 +717,16 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         history = load_history(sender_id)
         
         # Dodajemy ZBIORCZĄ wiadomość do historii
-        new_msg = types.Content(role="user", parts=[types.Part(text=combined_text)])
-        new_msg.read = False
-        history.append(new_msg)
+        new_content = types.Content(role="user", parts=[types.Part(text=combined_text)])
+        history.append({
+            "content": new_content,
+            "read": False,
+            "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+        })
 
         # Sprawdź tryby specjalne
-        manual_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'MANUAL_MODE')
-        post_reservation_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'POST_RESERVATION_MODE')
+        manual_mode_active = any(item["content"].role == 'model' and item["content"].parts[0].text == 'MANUAL_MODE' for item in history)
+        post_reservation_mode_active = any(item["content"].role == 'model' and item["content"].parts[0].text == 'POST_RESERVATION_MODE' for item in history)
 
         if manual_mode_active:
             logging.info(f"Użytkownik {sender_id} jest w trybie ręcznym.")
@@ -725,10 +737,14 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
             user_msg_lower = combined_text.lower()
             if "pomoc" in user_msg_lower:
                 admin_email = ADMIN_EMAIL_NOTIFICATIONS
-                last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
+                last_msgs = "\n".join([f"Klient: {item['content'].parts[0].text}" if item['content'].role == 'user' else f"Bot: {item['content'].parts[0].text}" for item in history[-5:]])
                 html_content = f"<p>Użytkownik {sender_id} prosi o pomoc.</p><pre>{last_msgs}</pre>"
                 send_email_via_brevo(admin_email, "Prośba o pomoc", html_content)
-                history.append(types.Content(role="model", parts=[types.Part(text="MANUAL_MODE")]))
+                history.append({
+                    "content": types.Content(role="model", parts=[types.Part(text="MANUAL_MODE")]),
+                    "read": True,
+                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                })
                 save_history(sender_id, history)
                 return
             send_message_with_typing(sender_id, 'Dziękujemy za kontakt. Wpisz "POMOC" jeśli masz pytania.', page_token)
@@ -745,15 +761,27 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 if price:
                     final_offer = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut. Czy umówić lekcję?"
                     send_message_with_typing(sender_id, final_offer, page_token)
-                    history.append(types.Content(role="model", parts=[types.Part(text=final_offer)]))
+                    history.append({
+                        "content": types.Content(role="model", parts=[types.Part(text=final_offer)]),
+                        "read": True,
+                        "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                    })
                 else:
                     error_msg = "Nie udało się obliczyć ceny. Proszę podać klasę i typ szkoły."
                     send_message_with_typing(sender_id, error_msg, page_token)
-                    history.append(types.Content(role="model", parts=[types.Part(text=error_msg)]))
+                    history.append({
+                        "content": types.Content(role="model", parts=[types.Part(text=error_msg)]),
+                        "read": True,
+                        "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                    })
             else:
                 missing_info_message = run_question_creator_ai(history, extracted_data["missing"])
                 send_message_with_typing(sender_id, missing_info_message, page_token)
-                history.append(types.Content(role="model", parts=[types.Part(text=missing_info_message)]))
+                history.append({
+                    "content": types.Content(role="model", parts=[types.Part(text=missing_info_message)]),
+                    "read": True,
+                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                })
 
 # Logika obsługi tagu [ZAPISZ_NA_LEKCJE]
         elif AGREEMENT_MARKER in ai_response_raw:
@@ -772,10 +800,18 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 send_message_with_typing(sender_id, final_message_to_user, page_token)
                 
                 # Zapisujemy wiadomość bota do historii
-                history.append(types.Content(role="model", parts=[types.Part(text=final_message_to_user)]))
+                history.append({
+                    "content": types.Content(role="model", parts=[types.Part(text=final_message_to_user)]),
+                    "read": True,
+                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                })
                 
                 # --- ZMIANA 2: Dodajemy znacznik zmiany statusu rozmowy ---
-                history.append(types.Content(role="model", parts=[types.Part(text="POST_RESERVATION_MODE")]))
+                history.append({
+                    "content": types.Content(role="model", parts=[types.Part(text="POST_RESERVATION_MODE")]),
+                    "read": True,
+                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+                })
                 logging.info(f"Użytkownik {sender_id} otrzymał link. Przechodzę w tryb POST_RESERVATION_MODE.")
                 # --------------------------------------------------------
                 
@@ -785,7 +821,11 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         else:
             # Zwykła odpowiedź
             send_message_with_typing(sender_id, ai_response_raw, page_token)
-            history.append(types.Content(role="model", parts=[types.Part(text=ai_response_raw)]))
+            history.append({
+                "content": types.Content(role="model", parts=[types.Part(text=ai_response_raw)]),
+                "read": True,
+                "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
+            })
         
         save_history(sender_id, history)
 
