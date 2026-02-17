@@ -6,7 +6,11 @@ import os
 import json
 import requests
 import time
-import google.generativeai as genai
+import vertexai
+from vertexai.generative_models import (
+    GenerativeModel, Part, Content, GenerationConfig,
+    SafetySetting, HarmCategory, HarmBlockThreshold
+)
 import errno
 from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
 from database import DatabaseTable
@@ -67,53 +71,28 @@ EXPECTING_REPLY = "EXPECTING_REPLY"
 CONVERSATION_ENDED = "CONVERSATION_ENDED"
 FOLLOW_UP_LATER = "FOLLOW_UP_LATER"
 
-GENERATION_CONFIG = {
-    "temperature": 0.7,
-    "top_p": 0.95,
-    "top_k": 40,
-    "max_output_tokens": 1024,
-}
+GENERATION_CONFIG = GenerationConfig(temperature=0.7, top_p=0.95, top_k=40, max_output_tokens=1024)
 SAFETY_SETTINGS = [
-    {
-        "category": "HARM_CATEGORY_HARASSMENT",
-        "threshold": "BLOCK_ONLY_HIGH"
-    },
-    {
-        "category": "HARM_CATEGORY_HATE_SPEECH",
-        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-    },
-    {
-        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-    },
-    {
-        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-        "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-    },
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_ONLY_HIGH),
+    SafetySetting(category=HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
 ]
 
 # =====================================================================
-# === INICJALIZACJA GOOGLE GEN AI =====================================
+# === INICJALIZACJA AI ================================================
 # =====================================================================
 gemini_model = None
 try:
-    GEMINI_API_KEY = config.get("AI_CONFIG", {}).get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    
-    if not GEMINI_API_KEY:
-        print("!!! KRYTYCZNY BŁĄD: Brak klucza API Gemini")
+    if not all([PROJECT_ID, LOCATION, MODEL_ID]):
+        print("!!! KRYTYCZNY BŁĄD: Brak pełnej konfiguracji AI w pliku config.json")
     else:
-        print("--- Inicjalizowanie Google Gen AI...")
-        genai.configure(api_key=GEMINI_API_KEY)
-        gemini_model = genai.GenerativeModel(MODEL_ID)
-        print(f"--- Model AI '{MODEL_ID}' zainicjalizowany.")
-        
-        # TEST: sprawdź czy działa
-        test_response = gemini_model.generate_content('Hello')
-        print(f"--- Test połączenia OK: {test_response.text[:30]}...")
-        
+        print(f"--- Inicjalizowanie Vertex AI: Projekt={PROJECT_ID}, Lokalizacja={LOCATION}")
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        print("--- Inicjalizacja Vertex AI OK.")
+        print(f"--- Ładowanie modelu: {MODEL_ID}")
+        gemini_model = GenerativeModel(MODEL_ID)
+        print(f"--- Model {MODEL_ID} załadowany OK.")
 except Exception as e:
-    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Gen AI: {e}", flush=True)
-    gemini_model = None
+    print(f"!!! KRYTYCZNY BŁĄD inicjalizacji Vertex AI: {e}", flush=True)
 
 
 # =====================================================================
@@ -345,28 +324,26 @@ def load_history(user_psid):
         history = []
         for msg_data in history_data:
             if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
-            if msg_data.get('role') in ('user', 'model') and msg_data.get('parts'):
-                history.append({
-                    "role": msg_data['role'],
-                    "parts": [p['text'] for p in msg_data['parts']],
-                    "read": msg_data.get("read", False),
-                    "timestamp": msg_data.get("timestamp")
-                })
+                parts = [Part.from_text(p['text']) for p in msg_data['parts']]
+                msg = Content(role=msg_data['role'], parts=parts)
+                msg.read = msg_data.get('read', False)
+                msg.timestamp = msg_data.get('timestamp')
+                history.append(msg)
         return history
     except Exception: return []
 
 def save_history(user_psid, history):
     ensure_dir(HISTORY_DIR)
     filepath = os.path.join(HISTORY_DIR, f"{user_psid}.json")
+    history_to_save = history  # Bez limitu długości historii
     history_data = []
-    for item in history:
-        parts_data = [{'text': part} for part in item['parts']]
-        msg_dict = {
-            'role': item['role'],
-            'parts': parts_data,
-            'read': item.get('read', False),
-            'timestamp': item.get('timestamp')
-        }
+    for msg in history_to_save:
+        parts_data = [{'text': part.text} for part in msg.parts]
+        msg_dict = {'role': msg.role, 'parts': parts_data}
+        if hasattr(msg, 'read'):
+            msg_dict['read'] = msg.read
+        if hasattr(msg, 'timestamp'):
+            msg_dict['timestamp'] = msg.timestamp
         history_data.append(msg_dict)
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -472,12 +449,8 @@ def check_and_send_nudges():
                         logging.info(f"[Scheduler] Wysłano przypomnienie poziom {level} dla PSID {psid}")
                         # Dodaj wiadomość przypominającą do historii konwersacji
                         history = load_history(psid)
-                        history.append({
-                            "role": "model",
-                            "parts": [message_to_send],
-                            "read": True,
-                            "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                        })
+                        reminder_msg = Content(role="model", parts=[Part.from_text(message_to_send)])
+                        history.append(reminder_msg)
                         save_history(psid, history)
                         logging.info(f"Dodano wiadomość przypominającą do historii dla PSID {psid}")
                     if level == 1 and task["status"] == "pending_expect_reply_1":
@@ -534,11 +507,11 @@ def run_data_extractor_ai(history):
     { "status": "missing_data", "missing": ["klasa", "poziom"] }
     """
     
-    chat_history_text = "\n".join([f"{item['role']}: {item['parts'][0]}" for item in history])
+    chat_history_text = "\n".join([f"{msg.role}: {msg.parts[0].text}" for msg in history])
     full_prompt = f"{instruction}\n\nHistoria czatu:\n{chat_history_text}"
     
     try:
-        response = gemini_model.generate_content(contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        response = gemini_model.generate_content(full_prompt)
         clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
         
         # LOGOWANIE SUROWEJ ODPOWIEDZI AI
@@ -564,11 +537,10 @@ def run_question_creator_ai(history, missing_fields):
     Na podstawie historii rozmowy, sformułuj pytanie, które będzie logicznie pasować do konwersacji.
     """
     
-    history_for_prompt = [{"role": item["role"], "parts": item["parts"]} for item in history]
-    full_prompt = [{"role": "user", "parts": [instruction]}] + history_for_prompt
+    full_prompt = [Content(role="user", parts=[Part.from_text(instruction)])] + history
     
     try:
-        response = gemini_model.generate_content(contents=full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        response = gemini_model.generate_content(full_prompt)
         return response.text.strip()
     except Exception as e:
         logging.error(f"Błąd kreatora pytań AI: {e}")
@@ -610,16 +582,17 @@ def send_message_with_typing(recipient_id, message_text, page_access_token):
 
 def classify_conversation(history):
     if not gemini_model: return EXPECTING_REPLY
-    chat_history_text = "\n".join([f"Klient: {item['parts'][0]}" if item['role'] == 'user' else f"Bot: {item['parts'][0]}" for item in history[-4:]])
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-4:]])
     prompt_for_analysis = f"OTO FRAGMENT HISTORII CZATU:\n---\n{chat_history_text}\n---"
-    full_prompt = f"{SYSTEM_INSTRUCTION_CLASSIFIER}\n\n{prompt_for_analysis}"
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(SYSTEM_INSTRUCTION_CLASSIFIER)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę jeden z trzech statusów.")]),
+        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
+    ]
     try:
-        analysis_config = genai.types.GenerationConfig(temperature=0.0)
-        response = gemini_model.generate_content(
-            contents=full_prompt,
-            generation_config=analysis_config
-        )
-        status = response.text.strip()
+        analysis_config = GenerationConfig(temperature=0.0)
+        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        status = "".join(part.text for part in response.candidates[0].content.parts).strip()
         if status in [EXPECTING_REPLY, CONVERSATION_ENDED, FOLLOW_UP_LATER]: return status
         return EXPECTING_REPLY
     except Exception as e:
@@ -627,20 +600,21 @@ def classify_conversation(history):
         return EXPECTING_REPLY
 
 def estimate_follow_up_time(history):
-    if not gemini_client: return None
+    if not gemini_model: return None
     now_str = datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     formatted_instruction = SYSTEM_INSTRUCTION_ESTIMATOR.replace("__CURRENT_TIME__", now_str)
-    chat_history_text = "\n".join([f"Klient: {item['content'].parts[0].text}" if item['content'].role == 'user' else f"Bot: {item['content'].parts[0].text}" for item in history])
+    chat_history_text = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history])
     prompt_for_analysis = f"OTO PEŁNA HISTORIA CZATU:\n---\n{chat_history_text}\n---"
-    full_prompt = f"{formatted_instruction}\n\n{prompt_for_analysis}"
-
+    full_prompt = [
+        Content(role="user", parts=[Part.from_text(formatted_instruction)]),
+        Content(role="model", parts=[Part.from_text("Rozumiem. Zwrócę datę w formacie ISO 8601.")]),
+        Content(role="user", parts=[Part.from_text(prompt_for_analysis)])
+    ]
     try:
-        analysis_config = genai.types.GenerationConfig(temperature=0.2)
-        response = gemini_model.generate_content(
-            contents=full_prompt,
-            generation_config=analysis_config
-        )
-        time_str = response.text.strip()
+        analysis_config = GenerationConfig(temperature=0.2)
+        response = gemini_model.generate_content(full_prompt, generation_config=analysis_config)
+        if not response.candidates: return None
+        time_str = "".join(part.text for part in response.candidates[0].content.parts).strip()
         if "T" in time_str and ":" in time_str: return time_str
         return None
     except Exception as e:
@@ -648,47 +622,28 @@ def estimate_follow_up_time(history):
         return None
 
 def get_gemini_response(history, prompt_details, is_follow_up=False):
-    """Generuje odpowiedź używając Google Gen AI."""
-    if not gemini_model:
-        return "Przepraszam, mam chwilowy problem z moim systemem."
-    
+    if not gemini_model: return "Przepraszam, mam chwilowy problem z moim systemem."
+    if is_follow_up:
+        system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, spersonalizowanej wiadomości przypominającej. "
+                              "Na podstawie historii rozmowy, nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
+        history_context = history[-4:] 
+        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
+                       Content(role="model", parts=[Part.from_text("Rozumiem. Stworzę wiadomość przypominającą.")])] + history_context
+    else:
+        system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
+            prompt_details=prompt_details, agreement_marker=AGREEMENT_MARKER)
+        full_prompt = [Content(role="user", parts=[Part.from_text(system_instruction)]),
+                       Content(role="model", parts=[Part.from_text("Rozumiem. Jestem gotów do rozmowy z klientem.")])] + history
     try:
-        # Przygotuj prompt systemowy
-        if not is_follow_up:
-            system_instruction = SYSTEM_INSTRUCTION_GENERAL.format(
-                prompt_details=prompt_details,
-                agreement_marker=AGREEMENT_MARKER
-            )
-        else:
-            system_instruction = ("Jesteś uprzejmym asystentem. Twoim zadaniem jest napisanie krótkiej, "
-                                 "spersonalizowanej wiadomości przypominającej. Na podstawie historii rozmowy, "
-                                 "nawiąż do ostatniego tematu i delikatnie zapytaj, czy użytkownik podjął już decyzję.")
-        
-        # Konwertuj historię na tekst
-        history_text = ""
-        for item in history[-10:]:
-            role = "Asystent" if item["role"] == "model" else "Klient"
-            if item.get('parts'):
-                history_text += f"{role}: {item['parts'][0]}\n"
-        
-        # Połącz wszystko w jeden prompt
-        full_prompt = f"{system_instruction}\n\nHistoria rozmowy:\n{history_text}\n\nAsystent:"
-        
-        # Wywołaj API
-        response = gemini_model.generate_content(
-            contents=full_prompt,
-            generation_config=GENERATION_CONFIG,
-            safety_settings=SAFETY_SETTINGS
-        )
-        
-        generated_text = response.text.strip()
+        response = gemini_model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+        if not response.candidates: return "Twoja wiadomość nie mogła zostać przetworzona."
+        generated_text = "".join(part.text for part in response.candidates[0].content.parts).strip()
         if is_follow_up and not generated_text:
             logging.warning("AI (przypomnienie) zwróciło pusty tekst. Używam domyślnej wiadomości.")
             return "Dzień dobry, chciałem tylko zapytać, czy udało się Państwu podjąć decyzję w sprawie lekcji?"
         return generated_text
-        
     except Exception as e:
-        logging.error(f"BŁĄD wywołania Gen AI: {e}", exc_info=True)
+        logging.error(f"BŁĄD wywołania Gemini: {e}", exc_info=True)
         return "Przepraszam, wystąpił nieoczekiwany błąd."
 
 # =====================================================================
@@ -709,16 +664,13 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         history = load_history(sender_id)
         
         # Dodajemy ZBIORCZĄ wiadomość do historii
-        history.append({
-            "role": "user",
-            "parts": [combined_text],
-            "read": False,
-            "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-        })
+        new_msg = Content(role="user", parts=[Part.from_text(combined_text)])
+        new_msg.read = False
+        history.append(new_msg)
 
         # Sprawdź tryby specjalne
-        manual_mode_active = any(item["role"] == 'model' and item["parts"][0] == 'MANUAL_MODE' for item in history)
-        post_reservation_mode_active = any(item["role"] == 'model' and item["parts"][0] == 'POST_RESERVATION_MODE' for item in history)
+        manual_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'MANUAL_MODE')
+        post_reservation_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'POST_RESERVATION_MODE')
 
         if manual_mode_active:
             logging.info(f"Użytkownik {sender_id} jest w trybie ręcznym.")
@@ -729,15 +681,10 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
             user_msg_lower = combined_text.lower()
             if "pomoc" in user_msg_lower:
                 admin_email = ADMIN_EMAIL_NOTIFICATIONS
-                last_msgs = "\n".join([f"Klient: {item['parts'][0]}" if item['role'] == 'user' else f"Bot: {item['parts'][0]}" for item in history[-5:]])
+                last_msgs = "\n".join([f"Klient: {msg.parts[0].text}" if msg.role == 'user' else f"Bot: {msg.parts[0].text}" for msg in history[-5:]])
                 html_content = f"<p>Użytkownik {sender_id} prosi o pomoc.</p><pre>{last_msgs}</pre>"
                 send_email_via_brevo(admin_email, "Prośba o pomoc", html_content)
-                history.append({
-                    "role": "model",
-                    "parts": ["MANUAL_MODE"],
-                    "read": True,
-                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                })
+                history.append(Content(role="model", parts=[Part.from_text("MANUAL_MODE")]))
                 save_history(sender_id, history)
                 return
             send_message_with_typing(sender_id, 'Dziękujemy za kontakt. Wpisz "POMOC" jeśli masz pytania.', page_token)
@@ -754,30 +701,15 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 if price:
                     final_offer = f"Oferujemy korepetycje matematyczne za {price} zł za lekcję 60 minut. Czy umówić lekcję?"
                     send_message_with_typing(sender_id, final_offer, page_token)
-                    history.append({
-                        "role": "model",
-                        "parts": [final_offer],
-                        "read": True,
-                        "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                    })
+                    history.append(Content(role="model", parts=[Part.from_text(final_offer)]))
                 else:
                     error_msg = "Nie udało się obliczyć ceny. Proszę podać klasę i typ szkoły."
                     send_message_with_typing(sender_id, error_msg, page_token)
-                    history.append({
-                        "role": "model",
-                        "parts": [error_msg],
-                        "read": True,
-                        "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                    })
+                    history.append(Content(role="model", parts=[Part.from_text(error_msg)]))
             else:
                 missing_info_message = run_question_creator_ai(history, extracted_data["missing"])
                 send_message_with_typing(sender_id, missing_info_message, page_token)
-                history.append({
-                    "role": "model",
-                    "parts": [missing_info_message],
-                    "read": True,
-                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                })
+                history.append(Content(role="model", parts=[Part.from_text(missing_info_message)]))
 
 # Logika obsługi tagu [ZAPISZ_NA_LEKCJE]
         elif AGREEMENT_MARKER in ai_response_raw:
@@ -796,20 +728,10 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 send_message_with_typing(sender_id, final_message_to_user, page_token)
                 
                 # Zapisujemy wiadomość bota do historii
-                history.append({
-                    "role": "model",
-                    "parts": [final_message_to_user],
-                    "read": True,
-                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                })
+                history.append(Content(role="model", parts=[Part.from_text(final_message_to_user)]))
                 
                 # --- ZMIANA 2: Dodajemy znacznik zmiany statusu rozmowy ---
-                history.append({
-                    "role": "model",
-                    "parts": ["POST_RESERVATION_MODE"],
-                    "read": True,
-                    "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-                })
+                history.append(Content(role="model", parts=[Part.from_text("POST_RESERVATION_MODE")]))
                 logging.info(f"Użytkownik {sender_id} otrzymał link. Przechodzę w tryb POST_RESERVATION_MODE.")
                 # --------------------------------------------------------
                 
@@ -819,12 +741,7 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         else:
             # Zwykła odpowiedź
             send_message_with_typing(sender_id, ai_response_raw, page_token)
-            history.append({
-                "role": "model",
-                "parts": [ai_response_raw],
-                "read": True,
-                "timestamp": datetime.now(pytz.timezone(TIMEZONE)).isoformat()
-            })
+            history.append(Content(role="model", parts=[Part.from_text(ai_response_raw)]))
         
         save_history(sender_id, history)
 
