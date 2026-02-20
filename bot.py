@@ -851,22 +851,21 @@ def set_operating_mode():
             print("Nieprawidłowy wybór. Wpisz 1 lub 2.")
 
 if __name__ == '__main__':
+    # Wybór trybu pracy jest teraz pierwszą czynnością, wykonywaną synchronicznie,
+    # aby zapobiec rozpoczęciu innych procesów przed podjęciem decyzji przez użytkownika.
+    set_operating_mode()
+
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
     logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
     logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
     ensure_dir(HISTORY_DIR)
-    
-    # Uruchomienie wyboru trybu w osobnym wątku, aby nie blokować startu serwera
-    mode_thread = threading.Thread(target=set_operating_mode)
-    mode_thread.daemon = True
-    mode_thread.start()
 
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
     scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=30)
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
-    
+
     port = int(os.environ.get("PORT", 5000))
     logging.info(f"Uruchamianie serwera na porcie {port}...")
     try:
