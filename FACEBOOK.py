@@ -21,7 +21,7 @@ except ImportError:
     print("OSTRZEŻENIE: Nie można załadować database_stats.py")
 
 from database import DatabaseTable
-from config import FB_PASSWORD
+from config import FB_PASSWORD, AI_CONFIG
 
 import vertexai
 from vertexai.generative_models import (
@@ -1251,12 +1251,10 @@ if __name__ == "__main__":
     
     ai_model = None
     try:
-        with open('config.json', 'r', encoding='utf-8') as f: config = json.load(f)
-        AI_CONFIG = config.get("AI_CONFIG", {})
         PROJECT_ID, LOCATION, MODEL_ID = AI_CONFIG.get("PROJECT_ID"), AI_CONFIG.get("LOCATION"), AI_CONFIG.get("MODEL_ID")
         
         if not all([PROJECT_ID, LOCATION, MODEL_ID]):
-            logging.critical("Brak pełnej konfiguracji AI w pliku config.json"); sys.exit(1)
+            logging.critical("Brak pełnej konfiguracji AI w pliku config.py"); sys.exit(1)
             
         vertexai.init(project=PROJECT_ID, location=LOCATION)
         ai_model = GenerativeModel(MODEL_ID)

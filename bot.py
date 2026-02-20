@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 # Wersja: OSTATECZNA (AI + Airtable + Dwuetapowa Analiza + Spersonalizowane Przypomnienia)
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from flask import Flask, request, Response
 import threading
 import os
@@ -12,7 +15,7 @@ from vertexai.generative_models import (
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
 import errno
-from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
+from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
 from database import DatabaseTable
 import logging
 from datetime import datetime, timedelta
@@ -33,18 +36,7 @@ user_timers = {}
 user_message_buffers = {}
 DEBOUNCE_SECONDS = 5  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
 
-# --- Wczytywanie konfiguracji z pliku ---
-config_path = '/home/korepetotor3/strona/config.json'
-try:
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError) as e:
-    print(f"!!! KRYTYCZNY BŁĄD: Nie można wczytać pliku '{config_path}': {e}")
-    exit()
-
-AI_CONFIG = config.get("AI_CONFIG", {})
-AIRTABLE_CONFIG = config.get("AIRTABLE_CONFIG", {})
-PAGE_CONFIG = config.get("PAGE_CONFIG", {})
+# Konfiguracja jest teraz importowana bezpośrednio z config.py
 
 PROJECT_ID = AI_CONFIG.get("PROJECT_ID")
 LOCATION = AI_CONFIG.get("LOCATION")
@@ -83,7 +75,7 @@ SAFETY_SETTINGS = [
 gemini_model = None
 try:
     if not all([PROJECT_ID, LOCATION, MODEL_ID]):
-        print("!!! KRYTYCZNY BŁĄD: Brak pełnej konfiguracji AI w pliku config.json")
+        print("!!! KRYTYCZNY BŁĄD: Brak pełnej konfiguracji AI w pliku config.py")
     else:
         print(f"--- Inicjalizowanie Vertex AI: Projekt={PROJECT_ID}, Lokalizacja={LOCATION}")
         vertexai.init(project=PROJECT_ID, location=LOCATION)
@@ -253,13 +245,7 @@ def send_email_via_brevo(to_email, subject, html_content):
     except Exception as e:
         logging.error(f"❌ Wyjątek krytyczny w send_email_via_brevo: {e}")
 
-def load_config():
-    try:
-        with open('config.json', 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.critical(f"KRYTYCZNY BŁĄD wczytywania config.json: {e}")
-        return {}
+# Usunięto funkcję load_config, ponieważ konfiguracja jest importowana
 
 def get_user_profile(psid, page_access_token):
     """Pobiera imię, nazwisko i zdjęcie profilowe użytkownika z Facebook Graph API."""
@@ -417,7 +403,7 @@ def schedule_nudge(psid, page_id, status, tasks_file, nudge_time_iso=None, nudge
     logging.info(f"Zaplanowano przypomnienie (status: {status}, level: {level}) dla PSID {psid} o {task_data.get('nudge_time_iso')}.")
 
 def check_and_send_nudges():
-    page_config_from_file = load_config().get("PAGE_CONFIG", {})
+    page_config_from_file = PAGE_CONFIG
     if not page_config_from_file:
         logging.error("[Scheduler] Błąd wczytywania konfiguracji.")
         return

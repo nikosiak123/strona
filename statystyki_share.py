@@ -1,5 +1,9 @@
 """
 statystyki_share.py - Serwer dla udostępniania statystyk komentarzy Facebook
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS
 Uruchomić na maszynie z bazą danych, aby udostępnić statystyki dla innych maszyn.
 """
 
