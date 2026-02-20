@@ -4,7 +4,10 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 import os
 import re
-from config import DB_PATH
+try:
+    from config import DB_PATH
+except ImportError:
+    from config_loader import DB_PATH
 
 def get_connection():
     """Zwraca połączenie z bazą danych."""

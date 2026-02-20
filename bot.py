@@ -15,7 +15,10 @@ from vertexai.generative_models import (
     SafetySetting, HarmCategory, HarmBlockThreshold
 )
 import errno
-from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
+try:
+    from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
+except ImportError:
+    from config_loader import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
 from database import DatabaseTable
 import logging
 from datetime import datetime, timedelta
