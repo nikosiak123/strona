@@ -20,6 +20,7 @@ try:
 except ImportError:
     from config_loader import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
 from database import DatabaseTable
+import database  # Import modułu, aby nadpisać DB_PATH
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -45,6 +46,14 @@ DEBOUNCE_SECONDS = 5  # Zwiększamy do 10 sekund, żeby dać czas na pisanie
 PROJECT_ID = AI_CONFIG.get("PROJECT_ID")
 LOCATION = AI_CONFIG.get("LOCATION")
 MODEL_ID = AI_CONFIG.get("MODEL_ID")
+
+# --- FIX: Wymuś poprawną ścieżkę do bazy danych (identycznie jak w backend.py) ---
+try:
+    from config_loader import DB_PATH as CORRECT_DB_PATH
+    print(f"--- FIX DATABASE PATH: Nadpisuję database.DB_PATH na: {CORRECT_DB_PATH}")
+    database.DB_PATH = CORRECT_DB_PATH
+except ImportError:
+    print("!!! BŁĄD: Nie można zaimportować config_loader. Baza może być w złym miejscu.")
 
 # Inicjalizacja bazy danych SQLite (zastąpienie Airtable)
 try:
