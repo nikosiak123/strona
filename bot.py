@@ -25,6 +25,7 @@ import atexit
 import uuid
 
 # --- Konfiguracja Ogólna ---
+OPERATING_MODE = "AI"  # Domyślnie AI, można zmienić przy starcie
 app = Flask(__name__)
 VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", FB_VERIFY_TOKEN)
 FACEBOOK_GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"
@@ -666,6 +667,12 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         new_msg.read = False
         history.append(new_msg)
 
+        # Sprawdzenie trybu pracy
+        if OPERATING_MODE == "MANUAL":
+            logging.info(f"Bot w trybie MANUALNYM. Wiadomość od {sender_id} została zapisana. Brak odpowiedzi AI.")
+            save_history(sender_id, history)
+            return
+
         # Sprawdź tryby specjalne
         manual_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'MANUAL_MODE')
         post_reservation_mode_active = any(msg for msg in history if msg.role == 'model' and msg.parts[0].text == 'POST_RESERVATION_MODE')
@@ -828,6 +835,21 @@ def webhook_handle():
     else:
         return Response("NOT_PAGE_EVENT", status=404)
 
+def set_operating_mode():
+    global OPERATING_MODE
+    while True:
+        mode = input("Wybierz tryb pracy bota: [1] AI (automatyczny) [2] MANUAL (ręczny): ").strip()
+        if mode == '1':
+            OPERATING_MODE = "AI"
+            print("--- Bot pracuje w trybie AI (automatycznym) ---")
+            break
+        elif mode == '2':
+            OPERATING_MODE = "MANUAL"
+            print("--- Bot pracuje w trybie MANUAL (ręcznym) ---")
+            break
+        else:
+            print("Nieprawidłowy wybór. Wpisz 1 lub 2.")
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s')
     logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
@@ -835,6 +857,11 @@ if __name__ == '__main__':
     logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
     ensure_dir(HISTORY_DIR)
     
+    # Uruchomienie wyboru trybu w osobnym wątku, aby nie blokować startu serwera
+    mode_thread = threading.Thread(target=set_operating_mode)
+    mode_thread.daemon = True
+    mode_thread.start()
+
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
     scheduler.add_job(func=check_and_send_nudges, trigger="interval", seconds=30)
     scheduler.start()
