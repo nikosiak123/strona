@@ -445,7 +445,7 @@ def check_and_send_nudges():
                     message_to_send = task.get("nudge_message")
                     level = task.get("level", 1)
                     if message_to_send:
-                        send_message_with_typing(psid, message_to_send, token)
+                        send_message_with_typing(psid, message_to_send, token, use_tag=True, tag="CONFIRMED_EVENT_UPDATE")
                         logging.info(f"[Scheduler] Wysłano przypomnienie poziom {level} dla PSID {psid}")
                         # Dodaj wiadomość przypominającą do historii konwersacji
                         history = load_history(psid)
@@ -560,7 +560,7 @@ def send_message(recipient_id, message_text, page_access_token):
     except requests.exceptions.RequestException as e:
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
-def send_message_with_typing(recipient_id, message_text, page_access_token):
+def send_message_with_typing(recipient_id, message_text, page_access_token, use_tag=False, tag="CONFIRMED_EVENT_UPDATE"):
     if not all([recipient_id, message_text, page_access_token]): return
     params = {"access_token": page_access_token}
     
@@ -571,12 +571,24 @@ def send_message_with_typing(recipient_id, message_text, page_access_token):
     except requests.exceptions.RequestException:
         pass
     
-    # 2. Wyślij wiadomość NATYCHMIAST (bez delay i sleep)
-    payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}, "messaging_type": "RESPONSE"}
+    # 2. Wyślij wiadomość
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": message_text},
+    }
+
+    if use_tag:
+        payload["messaging_type"] = "MESSAGE_TAG"
+        payload["tag"] = tag
+        log_message = f"Wysłano wiadomość z tagiem '{tag}' do {recipient_id}: '{message_text[:50]}...'"
+    else:
+        payload["messaging_type"] = "RESPONSE"
+        log_message = f"Wysłano wiadomość do {recipient_id}: '{message_text[:50]}...'"
+
     try:
         r = requests.post(FACEBOOK_GRAPH_API_URL, params=params, json=payload, timeout=30)
         r.raise_for_status()
-        logging.info(f"Wysłano wiadomość do {recipient_id}: '{message_text[:50]}...'")
+        logging.info(log_message)
     except requests.exceptions.RequestException as e:
         logging.error(f"Błąd wysyłania do {recipient_id}: {e}")
 
