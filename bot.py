@@ -16,9 +16,14 @@ from vertexai.generative_models import (
 )
 import errno
 try:
-    from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
+    from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG, DB_PATH
 except ImportError:
-    from config_loader import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG
+    # This is a fallback for environments where config.py is not in the parent directory.
+    # It's not ideal, but it provides some resilience.
+    print("!!! WARNING: Could not import from config.py. Attempting to load from a different path.")
+    # You might need to adjust this path based on your deployment structure
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+    from config import FB_VERIFY_TOKEN, BREVO_API_KEY, FROM_EMAIL, ADMIN_EMAIL_NOTIFICATIONS, AI_CONFIG, PAGE_CONFIG, DB_PATH
 from database import DatabaseTable
 import database  # Import modułu, aby nadpisać DB_PATH
 import logging
@@ -48,12 +53,7 @@ LOCATION = AI_CONFIG.get("LOCATION")
 MODEL_ID = AI_CONFIG.get("MODEL_ID")
 
 # --- FIX: Wymuś poprawną ścieżkę do bazy danych (identycznie jak w backend.py) ---
-try:
-    from config_loader import DB_PATH as CORRECT_DB_PATH
-    print(f"--- FIX DATABASE PATH: Nadpisuję database.DB_PATH na: {CORRECT_DB_PATH}")
-    database.DB_PATH = CORRECT_DB_PATH
-except ImportError:
-    print("!!! BŁĄD: Nie można zaimportować config_loader. Baza może być w złym miejscu.")
+database.DB_PATH = DB_PATH
 
 # Inicjalizacja bazy danych SQLite (zastąpienie Airtable)
 try:
