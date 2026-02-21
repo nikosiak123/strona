@@ -679,6 +679,13 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
         new_msg.read = False
         history.append(new_msg)
 
+        # Sprawdzenie i ewentualne zapisanie imienia i nazwiska
+        if not history[0].role == 'model' and not history[0].parts[0].text.startswith("name:"):
+            first_name, last_name, _ = get_user_profile(sender_id, page_token)
+            if first_name:
+                name_str = f"name: {first_name} {last_name if last_name else ''}".strip()
+                history.insert(0, Content(role="model", parts=[Part.from_text(name_str)]))
+
         # Sprawdzenie trybu pracy
         if OPERATING_MODE == "MANUAL":
             logging.info(f"Bot w trybie MANUALNYM. Wiadomość od {sender_id} została zapisana. Brak odpowiedzi AI.")
