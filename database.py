@@ -11,114 +11,120 @@ except ImportError:
 
 def get_connection():
     """Zwraca połączenie z bazą danych."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20) # Zwiększony timeout do 20 sekund
+    conn.execute("PRAGMA journal_mode=WAL") # Włączenie trybu WAL dla lepszej współbieżności
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_database():
     """Inicjalizuje bazę danych z wszystkimi tabelami."""
     conn = get_connection()
-    cursor = conn.cursor()
-    
-    # Tabela Klienci
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Klienci (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ClientID TEXT UNIQUE NOT NULL,
-            Imie TEXT,
-            Nazwisko TEXT,
-            LINK TEXT,
-            ImieKlienta TEXT,
-            NazwiskoKlienta TEXT,
-            Zdjecie TEXT,
-            wolna_kwota INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    try:
+        cursor = conn.cursor()
+        
+        # Tabela Klienci
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Klienci (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ClientID TEXT UNIQUE NOT NULL,
+                Imie TEXT,
+                Nazwisko TEXT,
+                LINK TEXT,
+                ImieKlienta TEXT,
+                NazwiskoKlienta TEXT,
+                Zdjecie TEXT,
+                wolna_kwota INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    # Tabela Korepetytorzy
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Korepetytorzy (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            TutorID TEXT UNIQUE NOT NULL,
-            ImieNazwisko TEXT NOT NULL,
-            Poniedziałek TEXT,
-            Wtorek TEXT,
-            Środa TEXT,
-            Czwartek TEXT,
-            Piątek TEXT,
-            Sobota TEXT,
-            Niedziela TEXT,
-            Przedmioty TEXT,
-            PoziomNauczania TEXT,
-            LINK TEXT,
-            LimitGodzinTygodniowo INTEGER DEFAULT NULL,
-            Email TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Tabela Rezerwacje
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Rezerwacje (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            Klient TEXT NOT NULL,
-            Korepetytor TEXT NOT NULL,
-            Data TEXT NOT NULL,
-            Godzina TEXT NOT NULL,
-            Przedmiot TEXT,
-            Status TEXT DEFAULT 'Oczekuje na płatność',
-            Typ TEXT DEFAULT 'Jednorazowa',
-            ManagementToken TEXT UNIQUE,
-            TeamsLink TEXT,
-            JestTestowa INTEGER DEFAULT 0,
-            Oplacona INTEGER DEFAULT 0,
-            confirmed INTEGER DEFAULT 0,
-            confirmation_deadline TEXT,
-            TypSzkoly TEXT,
-            Poziom TEXT,
-            Klasa TEXT,
-            WolnaKwotaUzyta INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (Klient) REFERENCES Klienci(ClientID)
-        )
-    ''')
-    
-    # Tabela StaleRezerwacje
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS StaleRezerwacje (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            Klient_ID TEXT NOT NULL,
-            Korepetytor TEXT NOT NULL,
-            DzienTygodnia TEXT NOT NULL,
-            Godzina TEXT NOT NULL,
-            Przedmiot TEXT,
-            Aktywna INTEGER DEFAULT 1,
-            TypSzkoly TEXT,
-            Poziom TEXT,
-            Klasa TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (Klient_ID) REFERENCES Klienci(ClientID)
-        )
-    ''')
-    
-    # Migracje kolumn (dla pewności)
-    tables_cols = {
-        'Korepetytorzy': ['Email', 'LimitGodzinTygodniowo'],
-        'Rezerwacje': ['WolnaKwotaUzyta', 'confirmed', 'confirmation_deadline']
-    }
-    
-    for table, columns in tables_cols.items():
-        for col in columns:
-            try:
-                cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
-            except sqlite3.OperationalError:
-                print(f"Migracja: Dodawanie kolumny {col} do tabeli {table}...")
-                col_type = "INTEGER" if col in ['LimitGodzinTygodniowo', 'WolnaKwotaUzyta', 'confirmed'] else "TEXT"
-                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        # Tabela Korepetytorzy
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Korepetytorzy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                TutorID TEXT UNIQUE NOT NULL,
+                ImieNazwisko TEXT NOT NULL,
+                Poniedziałek TEXT,
+                Wtorek TEXT,
+                Środa TEXT,
+                Czwartek TEXT,
+                Piątek TEXT,
+                Sobota TEXT,
+                Niedziela TEXT,
+                Przedmioty TEXT,
+                PoziomNauczania TEXT,
+                LINK TEXT,
+                LimitGodzinTygodniowo INTEGER DEFAULT NULL,
+                Email TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Tabela Rezerwacje
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Rezerwacje (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Klient TEXT NOT NULL,
+                Korepetytor TEXT NOT NULL,
+                Data TEXT NOT NULL,
+                Godzina TEXT NOT NULL,
+                Przedmiot TEXT,
+                Status TEXT DEFAULT 'Oczekuje na płatność',
+                Typ TEXT DEFAULT 'Jednorazowa',
+                ManagementToken TEXT UNIQUE,
+                TeamsLink TEXT,
+                JestTestowa INTEGER DEFAULT 0,
+                Oplacona INTEGER DEFAULT 0,
+                confirmed INTEGER DEFAULT 0,
+                confirmation_deadline TEXT,
+                TypSzkoly TEXT,
+                Poziom TEXT,
+                Klasa TEXT,
+                WolnaKwotaUzyta INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (Klient) REFERENCES Klienci(ClientID)
+            )
+        ''')
+        
+        # Tabela StaleRezerwacje
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS StaleRezerwacje (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Klient_ID TEXT NOT NULL,
+                Korepetytor TEXT NOT NULL,
+                DzienTygodnia TEXT NOT NULL,
+                Godzina TEXT NOT NULL,
+                Przedmiot TEXT,
+                Aktywna INTEGER DEFAULT 1,
+                TypSzkoly TEXT,
+                Poziom TEXT,
+                Klasa TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (Klient_ID) REFERENCES Klienci(ClientID)
+            )
+        ''')
+        
+        # Migracje kolumn (dla pewności)
+        tables_cols = {
+            'Korepetytorzy': ['Email', 'LimitGodzinTygodniowo'],
+            'Rezerwacje': ['WolnaKwotaUzyta', 'confirmed', 'confirmation_deadline']
+        }
+        
+        for table, columns in tables_cols.items():
+            for col in columns:
+                try:
+                    cursor.execute(f"SELECT {col} FROM {table} LIMIT 1")
+                except sqlite3.OperationalError:
+                    print(f"Migracja: Dodawanie kolumny {col} do tabeli {table}...")
+                    col_type = "INTEGER" if col in ['LimitGodzinTygodniowo', 'WolnaKwotaUzyta', 'confirmed'] else "TEXT"
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def _safe_bool_convert(value):
     """Bezpieczna konwersja do bool przy odczycie."""
@@ -232,35 +238,43 @@ class DatabaseTable:
 
     def create(self, fields: Dict[str, Any]) -> Dict:
         conn = get_connection()
-        cursor = conn.cursor()
-        
-        prepared_fields = self._prepare_fields_for_write(fields)
-        
-        columns = ', '.join(prepared_fields.keys())
-        placeholders = ', '.join(['?' for _ in prepared_fields])
-        query = f"INSERT INTO {self.table_name} ({columns}) VALUES ({placeholders})"
-        
-        cursor.execute(query, list(prepared_fields.values()))
-        record_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
-        return self.get(str(record_id))
+        try:
+            cursor = conn.cursor()
+            
+            prepared_fields = self._prepare_fields_for_write(fields)
+            
+            columns = ', '.join(prepared_fields.keys())
+            placeholders = ', '.join(['?' for _ in prepared_fields])
+            query = f"INSERT INTO {self.table_name} ({columns}) VALUES ({placeholders})"
+            
+            cursor.execute(query, list(prepared_fields.values()))
+            record_id = cursor.lastrowid
+            conn.commit()
+            return self.get(str(record_id))
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
     
     def update(self, record_id: str, fields: Dict[str, Any]) -> Dict:
         conn = get_connection()
-        cursor = conn.cursor()
-        
-        prepared_fields = self._prepare_fields_for_write(fields)
-        
-        set_clause = ', '.join([f"{k} = ?" for k in prepared_fields.keys()])
-        query = f"UPDATE {self.table_name} SET {set_clause} WHERE id = ?"
-        
-        cursor.execute(query, list(prepared_fields.values()) + [record_id])
-        conn.commit()
-        conn.close()
-        
-        return self.get(record_id)
+        try:
+            cursor = conn.cursor()
+            
+            prepared_fields = self._prepare_fields_for_write(fields)
+            
+            set_clause = ', '.join([f"{k} = ?" for k in prepared_fields.keys()])
+            query = f"UPDATE {self.table_name} SET {set_clause} WHERE id = ?"
+            
+            cursor.execute(query, list(prepared_fields.values()) + [record_id])
+            conn.commit()
+            return self.get(record_id)
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def _convert_formula_to_sql(self, formula: str) -> tuple:
         if not formula: return ("1=1", [])
@@ -309,26 +323,29 @@ class DatabaseTable:
 
     def first(self, formula: str = None) -> Optional[Dict]:
         conn = get_connection()
-        cursor = conn.cursor()
-        where, params = self._convert_formula_to_sql(formula)
-        print(f"DATABASE_FIRST: WHERE='{where}', PARAMS={params}") # DEBUGGING LINE
-        cursor.execute(f"SELECT * FROM {self.table_name} WHERE {where} LIMIT 1", params)
-        row = cursor.fetchone()
-        conn.close()
-        return self._row_to_dict(row)
+        try:
+            cursor = conn.cursor()
+            where, params = self._convert_formula_to_sql(formula)
+            cursor.execute(f"SELECT * FROM {self.table_name} WHERE {where} LIMIT 1", params)
+            row = cursor.fetchone()
+            return self._row_to_dict(row)
+        finally:
+            conn.close()
     
     def all(self, formula: str = None) -> List[Dict]:
         conn = get_connection()
-        cursor = conn.cursor()
-        where, params = self._convert_formula_to_sql(formula)
-        cursor.execute(f"SELECT * FROM {self.table_name} WHERE {where}", params)
-        rows = cursor.fetchall()
-        conn.close()
-        results = [self._row_to_dict(row) for row in rows]
-        # Dodatkowe filtrowanie dat w Pythonie
-        if formula and ('IS_AFTER' in formula or 'IS_BEFORE' in formula or 'OR' in formula or 'NOT' in formula):
-             return self._filter_complex_formula(results, formula)
-        return results
+        try:
+            cursor = conn.cursor()
+            where, params = self._convert_formula_to_sql(formula)
+            cursor.execute(f"SELECT * FROM {self.table_name} WHERE {where}", params)
+            rows = cursor.fetchall()
+            results = [self._row_to_dict(row) for row in rows]
+            # Dodatkowe filtrowanie dat w Pythonie
+            if formula and ('IS_AFTER' in formula or 'IS_BEFORE' in formula or 'OR' in formula or 'NOT' in formula):
+                 return self._filter_complex_formula(results, formula)
+            return results
+        finally:
+            conn.close()
 
     def _filter_complex_formula(self, records, formula):
         # Prosta implementacja filtra pythonowego dla logiki której nie obsłużył SQL
@@ -342,18 +359,25 @@ class DatabaseTable:
 
     def get(self, record_id: str) -> Optional[Dict]:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT * FROM {self.table_name} WHERE id = ?", [record_id])
-        row = cursor.fetchone()
-        conn.close()
-        return self._row_to_dict(row)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM {self.table_name} WHERE id = ?", [record_id])
+            row = cursor.fetchone()
+            return self._row_to_dict(row)
+        finally:
+            conn.close()
 
     def delete(self, record_id: str) -> None:
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(f"DELETE FROM {self.table_name} WHERE id = ?", [record_id])
-        conn.commit()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"DELETE FROM {self.table_name} WHERE id = ?", [record_id])
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def batch_update(self, records: List[Dict]) -> None:
         for record in records:
