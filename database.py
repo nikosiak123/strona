@@ -1,5 +1,8 @@
 import sys
 import os
+import json
+import re
+from typing import Optional, List, Dict, Any
 
 # Dodaj katalog nadrzędny do sys.path, aby można było zaimportować config.py
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
