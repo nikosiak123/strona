@@ -62,6 +62,7 @@ PATH_DO_RECZNEGO_CHROMEDRIVER = '/usr/local/bin/chromedriver'
 # --- STAŁE ---
 COOKIES_FILE = "anastazja_cookies.json"
 CLEANUP_INTERVAL_HOURS = 12 # NOWA ZMIENNA: Co ile godzin czyścić logi
+RESOURCE_EXHAUSTED_COUNT = 0 # Licznik błędów 429
 PROCESSED_POSTS_FILE = "processed_posts_db.pkl"
 AI_LOG_FILE = "ai_analysis_log.txt"
 ERROR_SCREENSHOTS_DIR = "debug_logs"
@@ -433,9 +434,11 @@ def save_processed_post_keys(keys_set):
     with open(PROCESSED_POSTS_FILE, 'wb') as f: pickle.dump(keys_set, f)
 
 def classify_post_with_gemini(model, post_text):
+    global RESOURCE_EXHAUSTED_COUNT
     default_response = {'category': "INNE", 'subject': None, 'level': None}
     if not post_text or len(post_text.strip()) < 10:
         return default_response
+
     system_instruction = """
 Przeanalizuj poniższy tekst posta z Facebooka.
 1. Skategoryzuj intencję posta jako SZUKAM, OFERUJE lub INNE.
@@ -465,19 +468,42 @@ Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
         Content(role="model", parts=[Part.from_text("Rozumiem. Będę analizować tekst, zwracając kategorię, przedmiot(y) i poziom nauczania w formacie JSON.")]),
         Content(role="user", parts=[Part.from_text(f"Tekst posta:\n---\n{post_text}\n---")])
     ]
-    try:
-        response = model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
-        if not response.candidates:
-            logging.error(f"Odpowiedź AI zablokowana. Powód: {response.prompt_feedback}")
+
+    max_retries = 3
+    base_delay = 5  # Początkowe opóźnienie w sekundach
+
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(full_prompt, generation_config=GENERATION_CONFIG, safety_settings=SAFETY_SETTINGS)
+            
+            if not response.candidates:
+                logging.error(f"Odpowiedź AI zablokowana. Powód: {response.prompt_feedback}")
+                return {'category': "ERROR", 'subject': None, 'level': None}
+                
+            raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+            result = json.loads(raw_text)
+            return result
+
+        except Exception as e:
+            error_message = str(e)
+            
+            # Sprawdzenie błędu 429 Resource Exhausted
+            if "429" in error_message or "Resource exhausted" in error_message:
+                RESOURCE_EXHAUSTED_COUNT += 1
+                wait_time = base_delay * (2 ** attempt) + random.uniform(0, 1) # Exponential backoff + jitter
+                print(f"⚠️ OSTRZEŻENIE: Wykryto błąd 429 (Resource Exhausted). To już {RESOURCE_EXHAUSTED_COUNT}. błąd tego typu. Próba {attempt + 1}/{max_retries}. Czekam {wait_time:.2f}s...")
+                time.sleep(wait_time)
+                continue # Ponów pętlę
+            
+            # Inne błędy - loguj i zwróć ERROR
+            logging.error(f"Nie udało się sklasyfikować posta (inny błąd): {e}")
+            if 'response' in locals() and hasattr(response, 'text'):
+                 logging.error(f"SUROWA ODPOWIEDŹ PRZY BŁĘDZIE: {response.text}")
             return {'category': "ERROR", 'subject': None, 'level': None}
-        raw_text = response.text.strip().replace("```json", "").replace("```", "").strip()
-        result = json.loads(raw_text)
-        return result
-    except Exception as e:
-        logging.error(f"Nie udało się sklasyfikować posta: {e}")
-        if 'response' in locals() and hasattr(response, 'text'):
-             logging.error(f"SUROWA ODPOWIEDŹ PRZY BŁĘDZIE: {response.text}")
-        return {'category': "ERROR", 'subject': None, 'level': None}
+
+    # Jeśli pętla się skończyła (wyczerpano limity retry)
+    print(f"❌ BŁĄD: Wyczerpano limit prób ({max_retries}) dla błędu 429. Pomijam ten post.")
+    return {'category': "ERROR", 'subject': None, 'level': None}
 
 
 def handle_fb_unavailable_error(driver):
