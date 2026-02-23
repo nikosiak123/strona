@@ -469,8 +469,12 @@ Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
         Content(role="user", parts=[Part.from_text(f"Tekst posta:\n---\n{post_text}\n---")])
     ]
 
-    max_retries = 3
-    base_delay = 5  # Początkowe opóźnienie w sekundach
+    max_retries = 10 # Zwiększono liczbę prób do 10
+    
+    # Zdefiniowana sekwencja czasów oczekiwania (backoff)
+    # Dla prób powyżej zdefiniowanej listy, czas będzie podwajany względem ostatniego elementu lub ustalony na stałą wartość max (np. 300s)
+    # Wg instrukcji: 5s, 10s, 30s, 60s, 120s, 300s, itd.
+    retry_delays = [5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800] 
 
     for attempt in range(max_retries):
         try:
@@ -486,23 +490,41 @@ Jeśli kategoria to OFERUJE lub INNE, subject i level zawsze są null.
 
         except Exception as e:
             error_message = str(e)
+            is_retryable = False
             
-            # Sprawdzenie błędu 429 Resource Exhausted
+            # Lista błędów, które warto ponowić
             if "429" in error_message or "Resource exhausted" in error_message:
+                is_retryable = True
                 RESOURCE_EXHAUSTED_COUNT += 1
-                wait_time = base_delay * (2 ** attempt) + random.uniform(0, 1) # Exponential backoff + jitter
-                print(f"⚠️ OSTRZEŻENIE: Wykryto błąd 429 (Resource Exhausted). To już {RESOURCE_EXHAUSTED_COUNT}. błąd tego typu. Próba {attempt + 1}/{max_retries}. Czekam {wait_time:.2f}s...")
+                print(f"⚠️ OSTRZEŻENIE: Wykryto błąd 429 (Resource Exhausted). To już {RESOURCE_EXHAUSTED_COUNT}. błąd tego typu.")
+            elif "500" in error_message or "Internal Server Error" in error_message:
+                is_retryable = True
+                print(f"⚠️ OSTRZEŻENIE: Wykryto błąd serwera (500).")
+            elif "503" in error_message or "Service Unavailable" in error_message:
+                is_retryable = True
+                print(f"⚠️ OSTRZEŻENIE: Wykryto błąd niedostępności usługi (503).")
+            
+            if is_retryable:
+                # Pobierz czas oczekiwania z listy lub użyj ostatniego elementu
+                if attempt < len(retry_delays):
+                    base_wait = retry_delays[attempt]
+                else:
+                    base_wait = retry_delays[-1] # Dla kolejnych prób (jeśli max_retries > len(retry_delays)) użyj ostatniego
+
+                wait_time = base_wait + random.uniform(0, 1) # Dodaj jitter
+                
+                print(f"   Próba {attempt + 1}/{max_retries}. Błąd API: {error_message[:50]}... Czekam {wait_time:.2f}s przed ponowieniem...")
                 time.sleep(wait_time)
                 continue # Ponów pętlę
             
             # Inne błędy - loguj i zwróć ERROR
-            logging.error(f"Nie udało się sklasyfikować posta (inny błąd): {e}")
+            logging.error(f"Nie udało się sklasyfikować posta (błąd nieodwracalny lub nieobsługiwany): {e}")
             if 'response' in locals() and hasattr(response, 'text'):
                  logging.error(f"SUROWA ODPOWIEDŹ PRZY BŁĘDZIE: {response.text}")
             return {'category': "ERROR", 'subject': None, 'level': None}
 
     # Jeśli pętla się skończyła (wyczerpano limity retry)
-    print(f"❌ BŁĄD: Wyczerpano limit prób ({max_retries}) dla błędu 429. Pomijam ten post.")
+    print(f"❌ BŁĄD: Wyczerpano limit prób ({max_retries}) dla błędów API. Pomijam ten post.")
     return {'category': "ERROR", 'subject': None, 'level': None}
 
 
@@ -1195,6 +1217,7 @@ def process_posts(driver, model):
 
                     print(f"\n[NOWY POST] Analizowanie posta od: {author_name}")
                     classification = classify_post_with_gemini(model, post_text)
+                    time.sleep(2) # Hard delay to prevent 429 errors
                     log_ai_interaction(post_text, classification)
                     category, subject, level = classification.get('category'), classification.get('subject'), classification.get('level')
                     
@@ -1247,6 +1270,9 @@ def process_posts(driver, model):
                 except Exception as e:
                     logging.error(f"Błąd wewnątrz pętli posta: {e}", exc_info=True)
                     log_error_state(driver, "post_critical_inner")
+                    # WAŻNE: Dodajemy klucz do przetworzonych nawet przy błędzie,
+                    # aby uniknąć pętli nieskończonej na jednym zepsutym poście.
+                    processed_keys.add(post_key) 
                     if page_refreshed_in_loop: break
                     continue
             
