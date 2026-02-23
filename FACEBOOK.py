@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
+
+# Dodaj katalog nadrzędny do sys.path, aby można było zaimportować config.py
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import pickle
 import time
 import traceback
@@ -19,6 +24,9 @@ try:
 except ImportError:
     DATABASE_AVAILABLE = False
     print("OSTRZEŻENIE: Nie można załadować database_stats.py")
+
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from database import DatabaseTable
 from config import FB_PASSWORD, AI_CONFIG

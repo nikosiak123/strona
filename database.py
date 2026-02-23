@@ -1,13 +1,12 @@
-import sqlite3
-import json
-from datetime import datetime
-from typing import Optional, List, Dict, Any
+import sys
 import os
-import re
-try:
-    from config import DB_PATH
-except ImportError:
-    from config_loader import DB_PATH
+
+# Dodaj katalog nadrzędny do sys.path, aby można było zaimportować config.py
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from config import DB_PATH
+
+import sqlite3
 
 def get_connection():
     """Zwraca połączenie z bazą danych."""
