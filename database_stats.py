@@ -28,16 +28,65 @@ def init_stats_database():
             Odrzucone INTEGER DEFAULT 0,
             Oczekuje INTEGER DEFAULT 0,
             Przeslane INTEGER DEFAULT 0,
+            Scrolls INTEGER DEFAULT 0,
             LastCommentTime TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
+    # Dodaj kolumnę Scrolls jeśli nie istnieje (dla migracji)
+    try:
+        cursor.execute("ALTER TABLE Statystyki ADD COLUMN Scrolls INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # Kolumna już istnieje
+    
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_statystyki_data ON Statystyki(Data)')
+    
+    # Tabela Logów Komentarzy (szczegółowe zdarzenia)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS CommentLogs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            author TEXT,
+            post_snippet TEXT,
+            scrolls_since_refresh INTEGER,
+            status TEXT
+        )
+    ''')
     
     conn.commit()
     conn.close()
     print(f"✓ Baza danych statystyk zainicjalizowana: {DB_PATH}")
+
+def log_comment(author, post_snippet, scrolls, status):
+    """Loguje szczegóły wysłanego komentarza."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO CommentLogs (author, post_snippet, scrolls_since_refresh, status) 
+            VALUES (?, ?, ?, ?)
+        """, [author, post_snippet, scrolls, status])
+        conn.commit()
+        conn.close()
+        print(f"SUKCES: [DB] Zalogowano komentarz (scrolle: {scrolls}).")
+        return True
+    except Exception as e:
+        print(f"BŁĄD: [DB] Nie udało się zalogować komentarza: {e}")
+        return False
+
+def get_comment_logs(limit=50):
+    """Pobiera ostatnie logi komentarzy."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM CommentLogs ORDER BY id DESC LIMIT ?", [limit])
+        records = cursor.fetchall()
+        conn.close()
+        return [dict(record) for record in records]
+    except Exception as e:
+        print(f"BŁĄD: [DB] Nie udało się pobrać logów komentarzy: {e}")
+        return []
 
 def update_stats(status_field: str):
     """
@@ -71,11 +120,13 @@ def update_stats(status_field: str):
         else:
             # Utwórz nowy rekord
             cursor.execute("""
-                INSERT INTO Statystyki (Data, Odrzucone, Oczekuje, Przeslane, LastCommentTime) 
-                VALUES (?, 0, 0, 0, NULL)
+                INSERT INTO Statystyki (Data, Odrzucone, Oczekuje, Przeslane, Scrolls, LastCommentTime) 
+                VALUES (?, 0, 0, 0, 0, NULL)
             """, [today_str])
             if status_field == "Przeslane":
                 cursor.execute(f"UPDATE Statystyki SET {status_field} = 1, LastCommentTime = ? WHERE Data = ?", [now_str, today_str])
+            elif status_field == "Scrolls":
+                cursor.execute(f"UPDATE Statystyki SET {status_field} = 1 WHERE Data = ?", [today_str])
             else:
                 cursor.execute(f"UPDATE Statystyki SET {status_field} = 1 WHERE Data = ?", [today_str])
             print(f"SUKCES: [DB] Utworzono nowy wiersz dla {today_str} i ustawiono '{status_field}' na 1.")
@@ -104,5 +155,4 @@ def get_stats():
         return []
 
 # Inicjalizacja przy imporcie
-if not os.path.exists(DB_PATH):
-    init_stats_database()
+init_stats_database()

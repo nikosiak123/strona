@@ -14,7 +14,7 @@ from datetime import datetime
 # --- IMPORTY DLA BAZY DANYCH, VERTEX AI I STEALTH ---
 # Zamieniono Airtable na 
 try:
-    from database_stats import update_stats
+    from database_stats import update_stats, log_comment
     DATABASE_AVAILABLE = True
 except ImportError:
     DATABASE_AVAILABLE = False
@@ -888,6 +888,22 @@ def update_database_stats(status_to_update):
         traceback.print_exc()
 
 
+def update_database_logs(author, snippet, scrolls, status):
+    """Zapisuje log komentarza w bazie."""
+    if not DATABASE_AVAILABLE: return
+    try:
+        log_comment(author, snippet, scrolls, status)
+    except Exception as e:
+        print(f"BŁĄD: [DB] Logowanie komentarza: {e}")
+
+def update_database_logs(author, snippet, scrolls, status):
+    """Zapisuje log komentarza w bazie."""
+    if not DATABASE_AVAILABLE: return
+    try:
+        log_comment(author, snippet, scrolls, status)
+    except Exception as e:
+        print(f"BŁĄD: [DB] Logowanie komentarza: {e}")
+
 def comment_and_check_status(driver, main_post_container, comment_list):
     wait = WebDriverWait(driver, 10)
     comment_textbox, action_context = None, None
@@ -998,6 +1014,7 @@ def process_posts(driver, model):
     last_screenshot_time = 0
     SCREENSHOT_INTERVAL_MINUTES = 15
     last_cleanup_time = 0
+    scrolls_since_refresh = 0 # Licznik scrolli od ostatniego odświeżenia
     # ---------------------------------------------------
 
     no_new_posts_in_a_row = 0
@@ -1020,6 +1037,7 @@ def process_posts(driver, model):
     # ---------------------------------------------------------------
 
     loop_count = 0
+    scrolls_since_refresh = 0 # Licznik scrolli od ostatniego odświeżenia
     while True:
         loop_count += 1
         print(f"\n--- Pętla przetwarzania nr {loop_count} ---")
@@ -1066,6 +1084,7 @@ def process_posts(driver, model):
                 
                 consecutive_empty_scans = 0
                 no_new_posts_in_a_row = 0
+                scrolls_since_refresh = 0 # Reset licznika
                 continue
             # -------------------------------------------------------------
 
@@ -1102,6 +1121,7 @@ def process_posts(driver, model):
                     driver.refresh()
                     random_sleep(10, 15)
                     consecutive_empty_scans = 0
+                    scrolls_since_refresh = 0 # Reset licznika
                 else:
                     random_sleep(8, 12)
                 continue
@@ -1160,7 +1180,9 @@ def process_posts(driver, model):
                                 hourly_comment_count += 1 # <--- DODAJ TĘ LINIĘ
                                 action_timestamps.append(time.time())
                                 update_database_stats(comment_status)
+                                update_database_logs(author_name, post_text[:100], scrolls_since_refresh, comment_status) # Logowanie szczegółów
                                 driver.refresh(); random_sleep(4, 7)
+                                scrolls_since_refresh = 0 # Reset licznika po odświeżeniu
                                 
                                 # --- DODAJ TO: ---
                                 ensure_latest_filter_active(driver)
@@ -1177,6 +1199,7 @@ def process_posts(driver, model):
                             driver.get("https://www.facebook.com/search/posts/?q=korepetycji")
                             random_sleep(8, 12)
                             page_refreshed_in_loop = True
+                            scrolls_since_refresh = 0 # Reset licznika
                     
                     else:
                         print(f"INFO: Pomijanie posta. Kategoria: {category}")
@@ -1212,6 +1235,7 @@ def process_posts(driver, model):
             if no_new_posts_in_a_row >= max_stale_scrolls:
                 print(f"INFO: Brak nowych postów od {max_stale_scrolls} scrollowań. Odświeżam stronę...")
                 driver.refresh()
+                scrolls_since_refresh = 0 # Reset licznika
                 
                 # 1. Najpierw naprawiamy filtry (jeśli dodałeś tę funkcję w poprzednim kroku)
                 ensure_latest_filter_active(driver)
@@ -1227,6 +1251,8 @@ def process_posts(driver, model):
             else:
                 print("INFO: Scrolluję w dół...")
                 human_scroll(driver)
+                update_database_stats("Scrolls") # Zliczanie scrolla
+                scrolls_since_refresh += 1 # Inkrementacja licznika
         
         except KeyboardInterrupt:
             break

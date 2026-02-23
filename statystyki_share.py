@@ -17,7 +17,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(__file__))
 
 # Import modułu statystyk
-from database_stats import get_stats
+from database_stats import get_stats, get_comment_logs
 from database_hourly_stats import get_hourly_stats
 
 # Dodaj tę stałą na początku, obok innych ścieżek (jeśli nie ma)
@@ -66,6 +66,17 @@ def get_facebook_hourly_stats():
         return jsonify({"stats": stats_data[::-1]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/facebook-comment-logs', methods=['GET'])
+def get_facebook_comment_logs():
+    """Zwraca szczegółowe logi komentarzy."""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        logs_data = get_comment_logs(limit=limit)
+        return jsonify({"logs": logs_data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/facebook-status-screenshots', methods=['GET'])
 def get_status_screenshots():
