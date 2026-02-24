@@ -78,7 +78,6 @@ def init_database():
                 JestTestowa INTEGER DEFAULT 0,
                 Oplacona INTEGER DEFAULT 0,
                 confirmed INTEGER DEFAULT 0,
-                confirmation_deadline TEXT,
                 TypSzkoly TEXT,
                 Poziom TEXT,
                 Klasa TEXT,
@@ -109,7 +108,7 @@ def init_database():
         # Migracje kolumn (dla pewności)
         tables_cols = {
             'Korepetytorzy': ['Email', 'LimitGodzinTygodniowo'],
-            'Rezerwacje': ['WolnaKwotaUzyta', 'confirmed', 'confirmation_deadline']
+            'Rezerwacje': ['WolnaKwotaUzyta', 'confirmed']
         }
         
         for table, columns in tables_cols.items():
@@ -154,6 +153,7 @@ class DatabaseTable:
         fields = dict(row)
         record_id = fields.pop('id')
         fields.pop('created_at', None)
+        fields.pop('confirmation_deadline', None)
         
         # 1. Obsługa list (JSON)
         if self.table_name == 'Korepetytorzy':
