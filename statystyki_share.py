@@ -45,6 +45,9 @@ def get_facebook_stats():
             if last_time_str:
                 try:
                     last_comment_time = datetime.strptime(last_time_str, '%Y-%m-%d %H:%M:%S')
+                    # FIX: Ustaw strefę czasową dla pobranej daty, aby uniknąć błędu "offset-naive and offset-aware"
+                    last_comment_time = pytz.timezone('Europe/Warsaw').localize(last_comment_time)
+
                     if datetime.now(pytz.timezone('Europe/Warsaw')) - last_comment_time < timedelta(hours=1):
                         is_running = True
                 except ValueError:
