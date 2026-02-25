@@ -230,7 +230,7 @@ def send_email_via_brevo(to_email, subject, html_content):
     }
     
     # Dodajemy timestamp do tematu, żeby Gmail nie łączył wiadomości w wątki
-    unique_subject = f"{subject} [{datetime.now().strftime('%H:%M:%S')}]"
+    unique_subject = f"{subject} [{datetime.now(pytz.timezone('Europe/Warsaw')).strftime('%H:%M:%S')}]"
 
     payload = {
         "sender": {

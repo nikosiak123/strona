@@ -14,6 +14,7 @@ import sys
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from datetime import datetime
+import pytz
 
 # Dodaj bieżący katalog do ścieżki (gdzie jest database_stats.py)
 sys.path.append(os.path.dirname(__file__))
@@ -44,7 +45,7 @@ def get_facebook_stats():
             if last_time_str:
                 try:
                     last_comment_time = datetime.strptime(last_time_str, '%Y-%m-%d %H:%M:%S')
-                    if datetime.now() - last_comment_time < timedelta(hours=1):
+                    if datetime.now(pytz.timezone('Europe/Warsaw')) - last_comment_time < timedelta(hours=1):
                         is_running = True
                 except ValueError:
                     pass  # Błąd parsowania daty

@@ -16,6 +16,8 @@ import logging
 import random
 from datetime import datetime
 
+import pytz
+
 # --- IMPORTY DLA BAZY DANYCH, VERTEX AI I STEALTH ---
 # Zamieniono Airtable na 
 try:
@@ -101,7 +103,7 @@ def take_status_screenshot(driver):
         if not os.path.exists(STATUS_SCREENSHOTS_DIR):
             os.makedirs(STATUS_SCREENSHOTS_DIR)
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(pytz.timezone('Europe/Warsaw')).strftime("%Y%m%d_%H%M%S")
         filename = f"STATUS_{timestamp}.png" # <--- ZMIANA: Zapisujemy jako PNG
         filepath = os.path.join(STATUS_SCREENSHOTS_DIR, filename)
         
@@ -187,7 +189,7 @@ def log_error_state(driver, location_name="unknown_error"):
         if not os.path.exists(ERROR_SCREENSHOTS_DIR):
             os.makedirs(ERROR_SCREENSHOTS_DIR)
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(pytz.timezone('Europe/Warsaw')).strftime("%Y%m%d_%H%M%S")
         base_filename = os.path.join(ERROR_SCREENSHOTS_DIR, f"ERROR_{location_name}_{timestamp}")
         
         # 1. Zapis zrzutu ekranu (PNG)
@@ -395,7 +397,7 @@ def log_ai_interaction(post_text, ai_response):
     try:
         with open(AI_LOG_FILE, 'a', encoding='utf-8') as f:
             f.write("="*80 + "\n")
-            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Timestamp: {datetime.now(pytz.timezone('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("-" * 20 + " TEKST POSTA " + "-" * 20 + "\n")
             f.write(post_text + "\n")
             f.write("-" * 20 + " ODPOWIEDŹ AI " + "-" * 20 + "\n")
@@ -1064,7 +1066,7 @@ def process_posts(driver, model):
     processed_keys = load_processed_post_keys()
     
     # --- NOWE ZMIENNE DO STATYSTYK I SCREENSHOTÓW ---
-    last_stats_hour = datetime.now().hour
+    last_stats_hour = datetime.now(pytz.timezone('Europe/Warsaw')).hour
     hourly_comment_count = 0
     hourly_loaded_posts_count = 0
     last_screenshot_time = 0
@@ -1088,7 +1090,7 @@ def process_posts(driver, model):
     
     # --- NOWE: Zapisz stan początkowy, żeby wykres nie był pusty ---
     print("INFO: Inicjalizacja statystyk godzinowych...")
-    timestamp_str = datetime.now().replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
+    timestamp_str = datetime.now(pytz.timezone('Europe/Warsaw')).replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
     save_hourly_stats(timestamp_str, 0, 0)
     # ---------------------------------------------------------------
 
@@ -1100,7 +1102,7 @@ def process_posts(driver, model):
         try:
             # --- NOWY BLOK DO DODANIA ---
             current_time = time.time()
-            now = datetime.now()
+            now = datetime.now(pytz.timezone('Europe/Warsaw'))
 
             # OKRESOWE CZYSZCZENIE LOGÓW BŁĘDÓW
             if (current_time - last_cleanup_time) > (CLEANUP_INTERVAL_HOURS * 3600):

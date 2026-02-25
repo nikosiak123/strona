@@ -5,6 +5,7 @@ NIE WSPÓŁDZIELI bazy danych z backend.py - każdy ma swoją!
 import sqlite3
 import os
 from datetime import datetime
+import pytz
 
 # Osobna baza danych dla statystyk Facebook
 DB_PATH = os.path.join(os.path.dirname(__file__), 'facebook_stats.db')
@@ -97,8 +98,8 @@ def update_stats(status_field: str):
         conn = get_connection()
         cursor = conn.cursor()
         
-        today_str = datetime.now().strftime('%d.%m.%Y')
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        today_str = datetime.now(pytz.timezone('Europe/Warsaw')).strftime('%d.%m.%Y')
+        now_str = datetime.now(pytz.timezone('Europe/Warsaw')).strftime('%Y-%m-%d %H:%M:%S')
         
         # Sprawdź czy rekord istnieje
         cursor.execute("SELECT * FROM Statystyki WHERE Data = ?", [today_str])

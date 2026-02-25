@@ -78,7 +78,8 @@ def add_test_data():
     print("\n3. Dodawanie rezerwacji...")
     
     from datetime import datetime, timedelta
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    import pytz
+    tomorrow = (datetime.now(pytz.timezone('Europe/Warsaw')) + timedelta(days=1)).strftime('%Y-%m-%d')
     
     test_reservations = [
         {
