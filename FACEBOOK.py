@@ -1068,6 +1068,7 @@ def process_posts(driver, model):
     # --- NOWE ZMIENNE DO STATYSTYK I SCREENSHOTÓW ---
     last_stats_hour = datetime.now(pytz.timezone('Europe/Warsaw')).hour
     hourly_comment_count = 0
+    hourly_sent_comments_count = 0 # Nowy licznik
     hourly_loaded_posts_count = 0
     last_screenshot_time = 0
     SCREENSHOT_INTERVAL_MINUTES = 15
@@ -1117,9 +1118,10 @@ def process_posts(driver, model):
             # ZAPISYWANIE STATYSTYK GODZINOWYCH
             if now.hour != last_stats_hour:
                 timestamp_str = now.replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
-                save_hourly_stats(timestamp_str, hourly_comment_count, hourly_loaded_posts_count)
+                save_hourly_stats(timestamp_str, hourly_comment_count, hourly_loaded_posts_count, hourly_sent_comments_count)
                 # Resetuj liczniki na nową godzinę
                 hourly_comment_count = 0
+                hourly_sent_comments_count = 0
                 hourly_loaded_posts_count = 0
                 last_stats_hour = now.hour
             # --- KONIEC NOWEGO BLOKU ---
@@ -1236,7 +1238,9 @@ def process_posts(driver, model):
                             print(f"✅ ZNALEZIONO DOPASOWANIE! Powód: {comment_reason}")
                             comment_status = comment_and_check_status(driver, main_post_container, comment_list_to_use)
                             if comment_status:
-                                hourly_comment_count += 1 # <--- DODAJ TĘ LINIĘ
+                                hourly_comment_count += 1 
+                                if comment_status == "Przeslane":
+                                    hourly_sent_comments_count += 1
                                 action_timestamps.append(time.time())
                                 update_database_stats(comment_status)
                                 update_database_logs(author_name, post_text[:100], scrolls_since_refresh, comment_status) # Logowanie szczegółów
