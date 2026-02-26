@@ -1034,16 +1034,16 @@ def comment_and_check_status(driver, main_post_container, comment_list):
         wait_short.until(EC.presence_of_element_located((By.XPATH, rejected_xpath)))
         status = "Odrzucone"
         
-        if status in ["Odrzucone", "Oczekuję"]:
+        if status in ["Odrzucone", "Oczekuje"]:
             log_error_state(driver, f"moderacja_status_{status.lower()}")
             
     except TimeoutException:
         try:
             pending_xpath = "//span[contains(text(), 'Oczekujący')] | //div[contains(text(), 'Oczekujący')]"
             wait_short.until(EC.presence_of_element_located((By.XPATH, pending_xpath)))
-            status = "Oczekuję"
+            status = "Oczekuje"
             
-            if status in ["Odrzucone", "Oczekuję"]:
+            if status in ["Odrzucone", "Oczekuje"]:
                 log_error_state(driver, f"moderacja_status_{status.lower()}")
                 
         except TimeoutException: 
@@ -1051,10 +1051,10 @@ def comment_and_check_status(driver, main_post_container, comment_list):
     
     print(f"    STATUS KOMENTARZA: {status.upper()}")
     
-    # Aktualizuj statystyki jeśli komentarz przesłany
-    if status == "Przeslane" and DATABASE_AVAILABLE:
+    # Aktualizuj statystyki dla każdego statusu
+    if DATABASE_AVAILABLE:
         # Przekazujemy tylko nazwę kolumny, którą chcemy zwiększyć o 1
-        update_stats("Przeslane")
+        update_database_stats(status)
     
     return status
 
