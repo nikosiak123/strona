@@ -747,7 +747,7 @@ def handle_conversation_logic(sender_id, recipient_id, combined_text):
                 reservation_link = f"https://zakręcone-korepetycje.pl/rezerwacja-testowa.html?clientID={client_id}"
 
                 # --- ZMIANA 1: Zaktualizowana treść wiadomości ---
-                final_message_to_user = f"Utworzyłem dla Państwa osobisty link do rezerwacji.\n\n{reservation_link}\n\nLekcję testową można wyjątkowo opłacić po połączeniu z korepetytorem."
+                final_message_to_user = f"Zarezerwowałem dla Państwa lekcję. Proszę wybrać dogodny termin zajęć.\n{reservation_link}\nLekcję testową można wyjątkowo opłacić po połączeniu z korepetytorem. \n\nLink do rezerwacji jest ważny tylko przez 24 godziny. Po tym czasie link wygasa i trzeba będzie poprosić o nowy."
                 
                 send_message_with_typing(sender_id, final_message_to_user, page_token)
                 
