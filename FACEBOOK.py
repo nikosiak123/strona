@@ -1061,15 +1061,11 @@ def comment_and_check_status(driver, main_post_container, comment_list):
 # ... (Funkcja process_posts i blok __main__ pozostają bez zmian) ...
 
 def process_posts(driver, model):
-    from database_hourly_stats import save_hourly_stats # <--- DODAJ TUTAJ (wewnątrz funkcji)
+    from database_hourly_stats import increment_hourly_stat
     print("\n--- ROZPOCZYNANIE PRZETWARZANIA POSTÓW ---")
     processed_keys = load_processed_post_keys()
     
     # --- NOWE ZMIENNE DO STATYSTYK I SCREENSHOTÓW ---
-    last_stats_hour = datetime.now(pytz.timezone('Europe/Warsaw')).hour
-    hourly_comment_count = 0
-    hourly_sent_comments_count = 0 # Nowy licznik
-    hourly_loaded_posts_count = 0
     last_screenshot_time = 0
     SCREENSHOT_INTERVAL_MINUTES = 15
     last_cleanup_time = 0
@@ -1089,12 +1085,6 @@ def process_posts(driver, model):
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 3
     
-    # --- NOWE: Zapisz stan początkowy, żeby wykres nie był pusty ---
-    print("INFO: Inicjalizacja statystyk godzinowych...")
-    timestamp_str = datetime.now(pytz.timezone('Europe/Warsaw')).replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
-    save_hourly_stats(timestamp_str, 0, 0)
-    # ---------------------------------------------------------------
-
     loop_count = 0
     scrolls_since_refresh = 0 # Licznik scrolli od ostatniego odświeżenia
     while True:
@@ -1103,7 +1093,6 @@ def process_posts(driver, model):
         try:
             # --- NOWY BLOK DO DODANIA ---
             current_time = time.time()
-            now = datetime.now(pytz.timezone('Europe/Warsaw'))
 
             # OKRESOWE CZYSZCZENIE LOGÓW BŁĘDÓW
             if (current_time - last_cleanup_time) > (CLEANUP_INTERVAL_HOURS * 3600):
@@ -1114,17 +1103,6 @@ def process_posts(driver, model):
             if (current_time - last_screenshot_time) > (SCREENSHOT_INTERVAL_MINUTES * 60):
                 take_status_screenshot(driver)
                 last_screenshot_time = current_time
-
-            # ZAPISYWANIE STATYSTYK GODZINOWYCH
-            if now.hour != last_stats_hour:
-                timestamp_str = now.replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
-                save_hourly_stats(timestamp_str, hourly_comment_count, hourly_loaded_posts_count, hourly_sent_comments_count)
-                # Resetuj liczniki na nową godzinę
-                hourly_comment_count = 0
-                hourly_sent_comments_count = 0
-                hourly_loaded_posts_count = 0
-                last_stats_hour = now.hour
-            # --- KONIEC NOWEGO BLOKU ---
 
             # --- ZABEZPIECZENIE: SPRAWDZENIE, CZY BOT SIĘ NIE ZGUBIŁ ---
             current_url = driver.current_url.lower()
@@ -1171,7 +1149,8 @@ def process_posts(driver, model):
             
             # NOWY LICZNIK: Zliczamy wszystkie posty na ekranie
             loaded_posts_count = len(story_elements_on_page)
-            hourly_loaded_posts_count += loaded_posts_count # <--- DODAJ TĘ LINIĘ
+            if loaded_posts_count > 0:
+                increment_hourly_stat("loaded_posts_total", count=loaded_posts_count)
 
             if not story_elements_on_page:
                 consecutive_empty_scans += 1
@@ -1238,9 +1217,9 @@ def process_posts(driver, model):
                             print(f"✅ ZNALEZIONO DOPASOWANIE! Powód: {comment_reason}")
                             comment_status = comment_and_check_status(driver, main_post_container, comment_list_to_use)
                             if comment_status:
-                                hourly_comment_count += 1 
+                                increment_hourly_stat("commented_posts")
                                 if comment_status == "Przeslane":
-                                    hourly_sent_comments_count += 1
+                                    increment_hourly_stat("sent_comments_count")
                                 action_timestamps.append(time.time())
                                 update_database_stats(comment_status)
                                 update_database_logs(author_name, post_text[:100], scrolls_since_refresh, comment_status) # Logowanie szczegółów

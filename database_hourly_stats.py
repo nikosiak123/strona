@@ -1,6 +1,7 @@
 import sqlite3
 import os
 from datetime import datetime
+import pytz
 
 # Osobna baza danych dla statystyk godzinowych
 DB_PATH = os.path.join(os.path.dirname(__file__), 'hourly_stats.db')
@@ -79,3 +80,47 @@ def get_hourly_stats(limit=48):
     except Exception as e:
         print(f"BŁĄD: [DB] Nie udało się pobrać statystyk godzinowych: {e}")
         return []
+
+
+def increment_hourly_stat(stat_field: str, count: int = 1):
+    """
+    Inkrementuje podaną statystykę dla bieżącej godziny.
+    Jeśli wpis dla godziny nie istnieje, tworzy go.
+    """
+    valid_fields = {'commented_posts', 'loaded_posts_total', 'sent_comments_count'}
+    if stat_field not in valid_fields:
+        print(f"BŁĄD: [HOURLY_STATS] Nieprawidłowe pole statystyki: {stat_field}")
+        return False
+    
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        now = datetime.now(pytz.timezone('Europe/Warsaw'))
+        timestamp_str = now.replace(minute=0, second=0, microsecond=0).strftime('%Y-%m-%d %H:00:00')
+        
+        # Krok 1: Upewnij się, że wiersz dla danej godziny istnieje.
+        cursor.execute("""
+            INSERT INTO HourlyStats (timestamp, commented_posts, loaded_posts_total, sent_comments_count)
+            VALUES (?, 0, 0, 0)
+            ON CONFLICT(timestamp) DO NOTHING;
+        """, [timestamp_str])
+
+        # Krok 2: Zaktualizuj (zinkrementuj) odpowiednią kolumnę.
+        cursor.execute(f"""
+            UPDATE HourlyStats 
+            SET {stat_field} = {stat_field} + ?
+            WHERE timestamp = ?;
+        """, [count, timestamp_str])
+        
+        conn.commit()
+        conn.close()
+        print(f"STATS: [HOURLY] Zinkrementowano '{stat_field}' o {count} dla godziny {timestamp_str}.")
+        return True
+        
+    except Exception as e:
+        print(f"BŁĄD INKREMENTACJI STATYSTYK GODZINOWYCH: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
