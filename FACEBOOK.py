@@ -1097,6 +1097,7 @@ def process_posts(driver, model):
             # OKRESOWE CZYSZCZENIE LOGÓW BŁĘDÓW
             if (current_time - last_cleanup_time) > (CLEANUP_INTERVAL_HOURS * 3600):
                 cleanup_old_logs(ERROR_SCREENSHOTS_DIR, max_age_hours=48)
+                cleanup_old_logs(STATUS_SCREENSHOTS_DIR, max_age_hours=48)
                 last_cleanup_time = current_time
 
             # OKRESOWE ZRZUTY EKRANU
