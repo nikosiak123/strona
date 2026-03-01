@@ -429,7 +429,12 @@ def load_cookies(driver, file_path):
 
 def load_processed_post_keys():
     if os.path.exists(PROCESSED_POSTS_FILE):
-        with open(PROCESSED_POSTS_FILE, 'rb') as f: return pickle.load(f)
+        try:
+            with open(PROCESSED_POSTS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except (pickle.UnpicklingError, EOFError):
+            print(f"OSTRZEŻENIE: Nie można wczytać pliku {PROCESSED_POSTS_FILE}. Plik może być uszkodzony. Tworzę nowy, pusty zbiór.")
+            return set()
     return set()
 
 def save_processed_post_keys(keys_set):
